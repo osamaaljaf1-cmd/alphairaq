@@ -1,0 +1,48 @@
+{
+    "title": "chat_messages",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "Sender user ID"
+        },
+        "sender_name": {
+            "type": "string",
+            "description": "Sender display name"
+        },
+        "receiver_id": {
+            "type": "string",
+            "description": "Receiver user ID"
+        },
+        "receiver_name": {
+            "type": "string",
+            "description": "Receiver display name"
+        },
+        "message_text": {
+            "type": "string",
+            "description": "Message content"
+        },
+        "is_read": {
+            "type": "boolean",
+            "description": "Whether the message has been read",
+            "default": false
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Message sent timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "sender_name",
+        "receiver_id",
+        "message_text",
+        "created_at"
+    ]
+}

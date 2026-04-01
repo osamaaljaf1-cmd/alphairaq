@@ -1,0 +1,59 @@
+{
+    "title": "daily_reports",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID of the representative"
+        },
+        "rep_name": {
+            "type": "string",
+            "description": "Representative name"
+        },
+        "report_date": {
+            "type": "string",
+            "description": "Report date YYYY-MM-DD"
+        },
+        "total_visits": {
+            "type": "integer",
+            "description": "Total visits count"
+        },
+        "completed_count": {
+            "type": "integer",
+            "description": "Completed visits count"
+        },
+        "cancelled_count": {
+            "type": "integer",
+            "description": "Cancelled visits count"
+        },
+        "deal_count": {
+            "type": "integer",
+            "description": "Number of deal tags"
+        },
+        "quota_count": {
+            "type": "integer",
+            "description": "Number of quota tags"
+        },
+        "followup_count": {
+            "type": "integer",
+            "description": "Number of followup tags"
+        },
+        "report_data": {
+            "type": "string",
+            "description": "JSON string of full report details"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Record creation timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id"
+    ]
+}

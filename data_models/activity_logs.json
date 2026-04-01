@@ -1,0 +1,33 @@
+{
+    "title": "activity_logs",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "action": {
+            "type": "string",
+            "description": "Action performed"
+        },
+        "page": {
+            "type": "string",
+            "description": "Page where action occurred"
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the action"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "action",
+        "page"
+    ]
+}

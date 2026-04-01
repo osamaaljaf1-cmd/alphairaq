@@ -1,0 +1,43 @@
+{
+    "title": "app_users",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth system"
+        },
+        "name": {
+            "type": "string",
+            "description": "User full name"
+        },
+        "email": {
+            "type": "string",
+            "description": "User email address"
+        },
+        "password_hash": {
+            "type": "string",
+            "description": "Hashed password"
+        },
+        "role": {
+            "type": "string",
+            "description": "User role: admin, rep, manager, accounting, delivery"
+        },
+        "status": {
+            "type": "string",
+            "description": "User status: active, inactive, blocked"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "name",
+        "email",
+        "password_hash",
+        "role",
+        "status"
+    ]
+}

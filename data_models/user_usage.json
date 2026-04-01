@@ -1,0 +1,37 @@
+{
+    "title": "user_usage",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "login_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Login timestamp"
+        },
+        "logout_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Logout timestamp, null until logout"
+        },
+        "duration_minutes": {
+            "type": "integer",
+            "description": "Duration in minutes between login and logout"
+        },
+        "date": {
+            "type": "string",
+            "format": "date",
+            "description": "Date of the usage record"
+        }
+    },
+    "required": [
+        "id",
+        "user_id"
+    ]
+}

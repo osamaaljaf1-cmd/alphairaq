@@ -1,0 +1,34 @@
+{
+    "title": "user_presence",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "display_name": {
+            "type": "string",
+            "description": "User display name"
+        },
+        "is_online": {
+            "type": "boolean",
+            "description": "Whether user is currently online",
+            "default": false
+        },
+        "last_active_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last activity timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "display_name",
+        "last_active_at"
+    ]
+}

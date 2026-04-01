@@ -1,0 +1,41 @@
+{
+    "title": "return_items",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "return_id": {
+            "type": "integer",
+            "description": "Foreign key to returns table"
+        },
+        "product_id": {
+            "type": "integer",
+            "description": "Product ID"
+        },
+        "quantity": {
+            "type": "integer",
+            "description": "Return quantity"
+        },
+        "unit_price": {
+            "type": "number",
+            "description": "Unit price"
+        },
+        "agreement_id": {
+            "type": "integer",
+            "description": "Agreement ID if applicable"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "return_id",
+        "product_id",
+        "quantity"
+    ]
+}

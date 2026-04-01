@@ -1,0 +1,50 @@
+{
+    "title": "doctors",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "name": {
+            "type": "string",
+            "description": "Doctor name"
+        },
+        "customer_number": {
+            "type": "string",
+            "description": "Unique customer number"
+        },
+        "specialty": {
+            "type": "string",
+            "description": "Medical specialty"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Phone number"
+        },
+        "hospital": {
+            "type": "string",
+            "description": "Hospital or clinic name"
+        },
+        "area": {
+            "type": "string",
+            "description": "Area/Region"
+        },
+        "representative_id": {
+            "type": "integer",
+            "description": "Linked representative ID"
+        },
+        "status": {
+            "type": "string",
+            "description": "Customer status: active or blocked"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Additional notes"
+        }
+    },
+    "required": [
+        "id",
+        "name"
+    ]
+}

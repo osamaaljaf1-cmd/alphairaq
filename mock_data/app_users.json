@@ -1,0 +1,10 @@
+[
+    {
+        "user_id": "local_admin_default",
+        "name": "مسؤول النظام",
+        "email": "admin",
+        "password_hash": "7953aa8a7ca996d810ea387fab9b5e32:57e4b61067a1d1b4e4a7c9c1a23b5cd2f313de5894ac7694420229d213bfecc5",
+        "role": "admin",
+        "status": "active"
+    }
+]

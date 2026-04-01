@@ -1,0 +1,62 @@
+[
+    {
+        "doctor_id": 1,
+        "pharmacy_id": 1,
+        "product_id": 1,
+        "agreed_price": 40.0,
+        "bonus_value": 5.0,
+        "bonus_type": "fixed",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "status": "active",
+        "notes": "اتفاقية سنوية"
+    },
+    {
+        "doctor_id": 1,
+        "pharmacy_id": 2,
+        "product_id": 3,
+        "agreed_price": 60.0,
+        "bonus_value": 10.0,
+        "bonus_type": "fixed",
+        "start_date": "2026-01-01",
+        "end_date": "2026-06-30",
+        "status": "active",
+        "notes": ""
+    },
+    {
+        "doctor_id": 2,
+        "pharmacy_id": 1,
+        "product_id": 7,
+        "agreed_price": 35.0,
+        "bonus_value": 8.0,
+        "bonus_type": "percentage",
+        "start_date": "2026-02-01",
+        "end_date": "2026-12-31",
+        "status": "active",
+        "notes": "اتفاقية خاصة"
+    },
+    {
+        "doctor_id": 3,
+        "pharmacy_id": 3,
+        "product_id": 4,
+        "agreed_price": 22.0,
+        "bonus_value": 3.0,
+        "bonus_type": "fixed",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "status": "active",
+        "notes": ""
+    },
+    {
+        "doctor_id": 4,
+        "pharmacy_id": 4,
+        "product_id": 5,
+        "agreed_price": 18.0,
+        "bonus_value": 5.0,
+        "bonus_type": "percentage",
+        "start_date": "2026-03-01",
+        "end_date": "2026-09-30",
+        "status": "active",
+        "notes": "اتفاقية جديدة"
+    }
+]

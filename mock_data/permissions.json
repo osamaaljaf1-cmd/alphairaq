@@ -1,0 +1,52 @@
+[
+    {
+        "role": "admin",
+        "page": "rep_operations",
+        "can_view": true,
+        "can_add": true,
+        "can_edit": true,
+        "can_delete": true,
+        "can_import": false,
+        "can_export": false
+    },
+    {
+        "role": "manager",
+        "page": "rep_operations",
+        "can_view": true,
+        "can_add": true,
+        "can_edit": true,
+        "can_delete": false,
+        "can_import": false,
+        "can_export": false
+    },
+    {
+        "role": "rep",
+        "page": "rep_operations",
+        "can_view": true,
+        "can_add": true,
+        "can_edit": true,
+        "can_delete": false,
+        "can_import": false,
+        "can_export": false
+    },
+    {
+        "role": "accounting",
+        "page": "rep_operations",
+        "can_view": true,
+        "can_add": false,
+        "can_edit": false,
+        "can_delete": false,
+        "can_import": false,
+        "can_export": false
+    },
+    {
+        "role": "delivery",
+        "page": "rep_operations",
+        "can_view": true,
+        "can_add": true,
+        "can_edit": true,
+        "can_delete": false,
+        "can_import": false,
+        "can_export": false
+    }
+]

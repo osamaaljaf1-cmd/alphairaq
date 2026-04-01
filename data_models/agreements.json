@@ -1,0 +1,58 @@
+{
+    "title": "agreements",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "doctor_id": {
+            "type": "integer",
+            "description": "Doctor ID reference"
+        },
+        "pharmacy_id": {
+            "type": "integer",
+            "description": "Pharmacy ID reference"
+        },
+        "product_id": {
+            "type": "integer",
+            "description": "Product ID reference"
+        },
+        "agreed_price": {
+            "type": "number",
+            "description": "Agreed price for the product"
+        },
+        "bonus_value": {
+            "type": "number",
+            "description": "Bonus value amount"
+        },
+        "bonus_type": {
+            "type": "string",
+            "description": "Bonus type: fixed or percentage"
+        },
+        "start_date": {
+            "type": "string",
+            "description": "Agreement start date"
+        },
+        "end_date": {
+            "type": "string",
+            "description": "Agreement end date"
+        },
+        "status": {
+            "type": "string",
+            "description": "Agreement status: active, expired, cancelled"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Additional notes"
+        }
+    },
+    "required": [
+        "id",
+        "doctor_id",
+        "pharmacy_id",
+        "product_id",
+        "agreed_price",
+        "bonus_value"
+    ]
+}

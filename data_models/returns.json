@@ -1,0 +1,62 @@
+{
+    "title": "returns",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth"
+        },
+        "order_id": {
+            "type": "integer",
+            "description": "Original order ID"
+        },
+        "pharmacy_id": {
+            "type": "integer",
+            "description": "Pharmacy ID"
+        },
+        "doctor_id": {
+            "type": "integer",
+            "description": "Doctor ID"
+        },
+        "representative_id": {
+            "type": "integer",
+            "description": "Representative ID"
+        },
+        "product_id": {
+            "type": "integer",
+            "description": "Product ID"
+        },
+        "quantity": {
+            "type": "integer",
+            "description": "Quantity returned"
+        },
+        "reason": {
+            "type": "string",
+            "description": "Return reason"
+        },
+        "status": {
+            "type": "string",
+            "description": "Return status: pending, approved, rejected"
+        },
+        "whatsapp_sent": {
+            "type": "boolean",
+            "description": "Whether WhatsApp notification was sent"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "product_id",
+        "quantity",
+        "reason"
+    ]
+}

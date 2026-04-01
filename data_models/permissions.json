@@ -1,0 +1,53 @@
+{
+    "title": "permissions",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "role": {
+            "type": "string",
+            "description": "User role"
+        },
+        "page": {
+            "type": "string",
+            "description": "Page identifier"
+        },
+        "can_view": {
+            "type": "boolean",
+            "description": "Can view permission",
+            "default": false
+        },
+        "can_add": {
+            "type": "boolean",
+            "description": "Can add permission",
+            "default": false
+        },
+        "can_edit": {
+            "type": "boolean",
+            "description": "Can edit permission",
+            "default": false
+        },
+        "can_delete": {
+            "type": "boolean",
+            "description": "Can delete permission",
+            "default": false
+        },
+        "can_import": {
+            "type": "boolean",
+            "description": "Can import Excel permission",
+            "default": false
+        },
+        "can_export": {
+            "type": "boolean",
+            "description": "Can export Excel permission",
+            "default": false
+        }
+    },
+    "required": [
+        "id",
+        "role",
+        "page"
+    ]
+}

@@ -1,0 +1,46 @@
+{
+    "title": "pharmacies",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "name": {
+            "type": "string",
+            "description": "Pharmacy name"
+        },
+        "customer_number": {
+            "type": "string",
+            "description": "Unique customer number"
+        },
+        "address": {
+            "type": "string",
+            "description": "Full address"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Phone number"
+        },
+        "area": {
+            "type": "string",
+            "description": "Area/Region"
+        },
+        "contact_person": {
+            "type": "string",
+            "description": "Contact person name"
+        },
+        "representative_id": {
+            "type": "integer",
+            "description": "Linked representative ID"
+        },
+        "status": {
+            "type": "string",
+            "description": "Customer status: active or blocked"
+        }
+    },
+    "required": [
+        "id",
+        "name"
+    ]
+}

@@ -1,0 +1,60 @@
+{
+    "title": "visits",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID of the representative"
+        },
+        "rep_name": {
+            "type": "string",
+            "description": "Representative name"
+        },
+        "customer_name": {
+            "type": "string",
+            "description": "Customer/pharmacy name visited"
+        },
+        "visit_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time of the visit"
+        },
+        "latitude": {
+            "type": "number",
+            "description": "Latitude of visit location"
+        },
+        "longitude": {
+            "type": "number",
+            "description": "Longitude of visit location"
+        },
+        "address": {
+            "type": "string",
+            "description": "Address or location description"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Visit notes"
+        },
+        "tags": {
+            "type": "string",
+            "description": "Comma-separated tags like deal,quota,followup"
+        },
+        "status": {
+            "type": "string",
+            "description": "Visit status: completed, in_progress, cancelled"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Record creation timestamp"
+        }
+    },
+    "required": [
+        "id",
+        "user_id"
+    ]
+}

@@ -1,0 +1,40 @@
+{
+    "title": "representatives",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth"
+        },
+        "name": {
+            "type": "string",
+            "description": "Representative name"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Phone number"
+        },
+        "region": {
+            "type": "string",
+            "description": "Assigned region"
+        },
+        "monthly_target": {
+            "type": "number",
+            "description": "Monthly sales target amount"
+        },
+        "role": {
+            "type": "string",
+            "description": "Role: rep, manager, medical_director, accounting"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "name",
+        "role"
+    ]
+}

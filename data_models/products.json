@@ -1,0 +1,44 @@
+{
+    "title": "products",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "name": {
+            "type": "string",
+            "description": "Product name"
+        },
+        "code": {
+            "type": "string",
+            "description": "Product code"
+        },
+        "price": {
+            "type": "number",
+            "description": "Product price"
+        },
+        "category": {
+            "type": "string",
+            "description": "Product category"
+        },
+        "unit": {
+            "type": "string",
+            "description": "Unit of measurement"
+        },
+        "stock_quantity": {
+            "type": "integer",
+            "description": "Stock quantity"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether the product is active",
+            "default": true
+        }
+    },
+    "required": [
+        "id",
+        "name",
+        "price"
+    ]
+}

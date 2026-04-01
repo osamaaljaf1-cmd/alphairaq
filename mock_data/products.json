@@ -1,0 +1,66 @@
+[
+    {
+        "name": "أموكسيسيلين 500mg",
+        "code": "AMX500",
+        "price": 45.0,
+        "category": "مضادات حيوية",
+        "unit": "علبة",
+        "stock_quantity": 500
+    },
+    {
+        "name": "أوميبرازول 20mg",
+        "code": "OMP20",
+        "price": 35.0,
+        "category": "معدة وهضم",
+        "unit": "علبة",
+        "stock_quantity": 300
+    },
+    {
+        "name": "أتورفاستاتين 10mg",
+        "code": "ATV10",
+        "price": 65.0,
+        "category": "قلب وأوعية",
+        "unit": "علبة",
+        "stock_quantity": 200
+    },
+    {
+        "name": "ديكلوفيناك 50mg",
+        "code": "DCF50",
+        "price": 25.0,
+        "category": "مسكنات",
+        "unit": "علبة",
+        "stock_quantity": 800
+    },
+    {
+        "name": "سيتريزين 10mg",
+        "code": "CTZ10",
+        "price": 20.0,
+        "category": "حساسية",
+        "unit": "علبة",
+        "stock_quantity": 600
+    },
+    {
+        "name": "ميتفورمين 850mg",
+        "code": "MTF850",
+        "price": 30.0,
+        "category": "سكري",
+        "unit": "علبة",
+        "stock_quantity": 400
+    },
+    {
+        "name": "أملوديبين 5mg",
+        "code": "AML5",
+        "price": 40.0,
+        "category": "ضغط",
+        "unit": "علبة",
+        "stock_quantity": 350
+    },
+    {
+        "name": "باراسيتامول 500mg",
+        "code": "PCM500",
+        "price": 15.0,
+        "category": "مسكنات",
+        "unit": "علبة",
+        "stock_quantity": 1000
+    }
+]

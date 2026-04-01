@@ -1,0 +1,58 @@
+{
+    "title": "messages",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID of sender"
+        },
+        "doctor_id": {
+            "type": "integer",
+            "description": "Doctor ID who received the message"
+        },
+        "pharmacy_id": {
+            "type": "integer",
+            "description": "Related pharmacy ID"
+        },
+        "product_id": {
+            "type": "integer",
+            "description": "Related product ID"
+        },
+        "return_id": {
+            "type": "integer",
+            "description": "Related return ID if applicable"
+        },
+        "message_type": {
+            "type": "string",
+            "description": "Type: whatsapp, sms, etc"
+        },
+        "message_content": {
+            "type": "string",
+            "description": "Full message text"
+        },
+        "doctor_phone": {
+            "type": "string",
+            "description": "Doctor phone number used"
+        },
+        "status": {
+            "type": "string",
+            "description": "sent, failed, pending"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When message was sent"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "doctor_id",
+        "message_type",
+        "message_content"
+    ]
+}

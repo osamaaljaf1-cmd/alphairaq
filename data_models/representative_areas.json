@@ -1,0 +1,23 @@
+{
+    "title": "representative_areas",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "representative_id": {
+            "type": "integer",
+            "description": "Representative ID from representatives table"
+        },
+        "area_id": {
+            "type": "integer",
+            "description": "Area ID from areas table"
+        }
+    },
+    "required": [
+        "id",
+        "representative_id",
+        "area_id"
+    ]
+}

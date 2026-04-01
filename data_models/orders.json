@@ -1,0 +1,62 @@
+{
+    "title": "orders",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth"
+        },
+        "representative_id": {
+            "type": "integer",
+            "description": "Representative ID"
+        },
+        "pharmacy_id": {
+            "type": "integer",
+            "description": "Pharmacy ID"
+        },
+        "doctor_id": {
+            "type": "integer",
+            "description": "Doctor ID"
+        },
+        "status": {
+            "type": "string",
+            "description": "Order status: pending, approved, rejected, printed"
+        },
+        "total_amount": {
+            "type": "number",
+            "description": "Total order amount"
+        },
+        "bonus_total": {
+            "type": "number",
+            "description": "Total bonus amount"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Order notes"
+        },
+        "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Creation timestamp"
+        },
+        "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Approval timestamp"
+        },
+        "approved_by": {
+            "type": "string",
+            "description": "Approved by user ID"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "pharmacy_id",
+        "status"
+    ]
+}

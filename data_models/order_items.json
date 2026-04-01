@@ -1,0 +1,46 @@
+{
+    "title": "order_items",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth"
+        },
+        "order_id": {
+            "type": "integer",
+            "description": "Order ID reference"
+        },
+        "product_id": {
+            "type": "integer",
+            "description": "Product ID reference"
+        },
+        "quantity": {
+            "type": "integer",
+            "description": "Quantity ordered"
+        },
+        "unit_price": {
+            "type": "number",
+            "description": "Unit price at time of order"
+        },
+        "bonus_amount": {
+            "type": "number",
+            "description": "Bonus amount for this item"
+        },
+        "agreement_id": {
+            "type": "integer",
+            "description": "Agreement ID if applicable"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "order_id",
+        "product_id",
+        "quantity",
+        "unit_price"
+    ]
+}

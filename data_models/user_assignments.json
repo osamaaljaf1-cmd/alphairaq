@@ -1,0 +1,33 @@
+{
+    "title": "user_assignments",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID of the manager or delivery person"
+        },
+        "manager_rep_id": {
+            "type": "integer",
+            "description": "Representative ID of the manager or delivery person"
+        },
+        "assigned_rep_id": {
+            "type": "integer",
+            "description": "Representative ID of the assigned rep"
+        },
+        "assignment_type": {
+            "type": "string",
+            "description": "Type: manager or delivery"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "manager_rep_id",
+        "assigned_rep_id",
+        "assignment_type"
+    ]
+}

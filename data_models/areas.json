@@ -1,0 +1,22 @@
+{
+    "title": "areas",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "name": {
+            "type": "string",
+            "description": "Area name"
+        },
+        "parent_area_id": {
+            "type": "integer",
+            "description": "Parent area ID for hierarchy, null for root areas"
+        }
+    },
+    "required": [
+        "id",
+        "name"
+    ]
+}

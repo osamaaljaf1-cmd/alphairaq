@@ -1,0 +1,45 @@
+{
+    "title": "agent_logs",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth"
+        },
+        "agent_id": {
+            "type": "string",
+            "description": "Agent identifier text"
+        },
+        "latitude": {
+            "type": "number",
+            "description": "Latitude coordinate"
+        },
+        "longitude": {
+            "type": "number",
+            "description": "Longitude coordinate"
+        },
+        "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the log entry"
+        },
+        "app_open": {
+            "type": "boolean",
+            "description": "Whether the app was opened",
+            "default": false
+        },
+        "app_close": {
+            "type": "boolean",
+            "description": "Whether the app was closed",
+            "default": false
+        }
+    },
+    "required": [
+        "id",
+        "user_id"
+    ]
+}
