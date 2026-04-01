@@ -34,3 +34,12 @@ sse-starlette>=1.6.0
 
 # payment module dependencies
 stripe>=12.0.0
+
+fastapi
+uvicorn[standard]
+
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
