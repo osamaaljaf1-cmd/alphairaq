@@ -207,48 +207,29 @@ def run_in_debug_mode(app: FastAPI):
 
     Args:
         app: The FastAPI application instance
-    """
-    import asyncio
-    from pathlib import Path
-
-    import uvicorn
-    from dotenv import load_dotenv
-
-    # Load environment variables from ../.env in debug mode
-    # If `LOCAL_DEBUG=true` is set, then MetaGPT's `ProjectBuilder.build()` will generate the `.env` file
-    env_path = Path(__file__).parent.parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path, override=True)
-        logger = logging.getLogger(__name__)
-        logger.info(f"Loaded environment variables from {env_path}")
-
-    # In debug mode, use asyncio.run() directly to avoid uvicorn's asyncio_run conflicts
-    config = uvicorn.Config(
-        app,
-        host="0.0.0.0",
-        port=int(settings.port),
-        log_level="info",
-    )
-    server = uvicorn.Server(config)
-    asyncio.run(server.serve())
-
+   import os
+import sys
+import uvicorn
 
 if __name__ == "__main__":
-    import sys
+    port = int(os.getenv("PORT", 8000))
 
-    import uvicorn
-
-    # Detect if running in debugger (PyCharm, VS Code, etc.)
-    # Debuggers patch asyncio which conflicts with uvicorn's asyncio_run
-    is_debugging = "pydevd" in sys.modules or (hasattr(sys, "gettrace") and sys.gettrace() is not None)
+    # Detect debug mode
+    is_debugging = "pydevd" in sys.modules or (
+        hasattr(sys, "gettrace") and sys.gettrace() is not None
+    )
 
     if is_debugging:
-        run_in_debug_mode(app)
-    else:
-        # Enable reload in normal mode
         uvicorn.run(
-            app,
+            "main:app",
             host="0.0.0.0",
-            port=int(settings.port),
-            reload_excludes=["**/*.py"],
+            port=port,
+            reload=True,
+        )
+    else:
+        uvicorn.run(
+            "main:app",
+            host="0.0.0.0",
+            port=port,
+            reload=False,
         )
