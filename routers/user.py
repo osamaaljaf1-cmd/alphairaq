@@ -36,3 +36,13 @@ async def update_profile(
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     return profile
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.get("/users")
+def get_users():
+    return [
+        {"id": 1, "name": "Ali"},
+        {"id": 2, "name": "Omar"}
+    ]
