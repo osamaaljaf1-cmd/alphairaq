@@ -44,3 +44,12 @@ if __name__ == "__main__":
         port=port,
         reload=False
     )
+from fastapi import APIRouter
+
+test_router = APIRouter()
+
+@test_router.get("/test")
+def test():
+    return {"message": "working"}
+
+app.include_router(test_router)
