@@ -53,3 +53,5 @@ def test():
     return {"message": "working"}
 
 app.include_router(test_router)
+
+app.include_router(test_router)
