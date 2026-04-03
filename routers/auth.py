@@ -360,3 +360,28 @@ async def logout():
     """Logout user."""
     logout_url = build_logout_url()
     return {"redirect_url": logout_url}
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+router = APIRouter()
+
+# بيانات تسجيل الدخول
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+# مستخدم وهمي للتجربة
+fake_user = {
+    "username": "admin",
+    "password": "123456"
+}
+
+@router.post("/login")
+def login(data: LoginRequest):
+    if data.username != fake_user["username"] or data.password != fake_user["password"]:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    return {
+        "access_token": "fake-jwt-token",
+        "token_type": "bearer"
+    }
