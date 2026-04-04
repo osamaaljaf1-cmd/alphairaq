@@ -9,7 +9,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# إعداد CORS (يسمح للفرونتند يتصل)
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,21 +18,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# لوق بسيط
+# logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Route رئيسي
+# routes الأساسية
 @app.get("/")
 def root():
     return {"message": "API is running 🚀"}
 
-# Route فحص
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-# تشغيل التطبيق
+# test router
+from fastapi import APIRouter
+
+test_router = APIRouter()
+
+@test_router.get("/test")
+def test():
+    return {"message": "working"}
+
+app.include_router(test_router)
+
+# 🔥 المهم هذا
+from routers import auth
+app.include_router(auth.router)
+
+# تشغيل
 if __name__ == "__main__":
     import uvicorn
 
@@ -44,14 +58,3 @@ if __name__ == "__main__":
         port=port,
         reload=False
     )
-from fastapi import APIRouter
-
-test_router = APIRouter()
-
-@test_router.get("/test")
-def test():
-    return {"message": "working"}
-
-app.include_router(test_router)
-
-app.include_router(test_router)
