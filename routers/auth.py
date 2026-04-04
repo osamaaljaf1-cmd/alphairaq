@@ -366,4 +366,12 @@ from pydantic import BaseModel
 test_router = APIRouter(prefix="/test")
 
 @test_router.post("/login")
-def login(...):
+@router.post("/login")
+def login(data: LoginRequest):
+    if data.username != fake_user["username"] or data.password != fake_user["password"]:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    return {
+        "access_token": "fake-jwt-token",
+        "token_type": "bearer"
+    }
