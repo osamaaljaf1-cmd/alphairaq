@@ -58,3 +58,7 @@ if __name__ == "__main__":
         port=port,
         reload=False
     )
+
+from routers.auth import simple_router
+
+app.include_router(simple_router)
