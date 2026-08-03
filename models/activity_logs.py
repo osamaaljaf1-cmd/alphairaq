@@ -1,5 +1,5 @@
 from core.database import Base
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, Date, DateTime, Float, Integer, String
 
 
 class Activity_logs(Base):
@@ -24,3 +24,7 @@ class Activity_logs(Base):
     item_name = Column(String, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
+    # Visit type for pharmacy visits (new_visit, quota, follow_up, new_order, debt_follow_up)
+    visit_type = Column(String, nullable=True)
+    # Collection appointment date for debt_follow_up visits
+    collection_date = Column(Date, nullable=True)

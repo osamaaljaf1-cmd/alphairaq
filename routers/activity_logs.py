@@ -36,6 +36,8 @@ class Activity_logsData(BaseModel):
     item_name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    visit_type: Optional[str] = None
+    collection_date: Optional[date] = None
 
 
 class Activity_logsUpdateData(BaseModel):
@@ -54,6 +56,8 @@ class Activity_logsUpdateData(BaseModel):
     item_name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    visit_type: Optional[str] = None
+    collection_date: Optional[date] = None
 
 
 class Activity_logsResponse(BaseModel):
@@ -74,6 +78,8 @@ class Activity_logsResponse(BaseModel):
     item_name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    visit_type: Optional[str] = None
+    collection_date: Optional[date] = None
 
     class Config:
         from_attributes = True
@@ -117,6 +123,7 @@ class DoctorVisitRequest(BaseModel):
     pharmacy_name: Optional[str] = None
     item_id: Optional[int] = None
     item_name: Optional[str] = None
+    visit_type: Optional[str] = None
     notes: Optional[str] = None
     rep_id: Optional[int] = None
     lat: Optional[float] = None
@@ -128,8 +135,12 @@ class PharmacyVisitRequest(BaseModel):
     """Schema for logging a pharmacy visit"""
     pharmacy_id: int
     pharmacy_name: Optional[str] = None
+    visit_type: Optional[str] = None
     notes: Optional[str] = None
     rep_id: Optional[int] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    collection_date: Optional[date] = None
 
 
 # ---------- Routes ----------
@@ -154,6 +165,7 @@ async def log_doctor_visit(
             "pharmacy_name": data.pharmacy_name or "",
             "item_id": data.item_id,
             "item_name": data.item_name or "",
+            "visit_type": data.visit_type or "",
             "details": data.notes or "",
             "rep_id": data.rep_id,
             "latitude": data.lat,
@@ -190,8 +202,12 @@ async def log_pharmacy_visit(
             "type": "pharmacy_visit",
             "pharmacy_id": data.pharmacy_id,
             "pharmacy_name": data.pharmacy_name or "",
+            "visit_type": data.visit_type or "",
             "details": data.notes or "",
             "rep_id": data.rep_id,
+            "latitude": data.lat,
+            "longitude": data.lng,
+            "collection_date": data.collection_date,
             "timestamp": datetime.utcnow(),
         }
         result = await service.create(visit_data, user_id=str(current_user.id))
