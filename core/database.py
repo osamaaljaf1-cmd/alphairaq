@@ -18,6 +18,10 @@ from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)
 
+# libpq-only query params (e.g. present in Neon's copy-paste connection string)
+# that asyncpg.connect() does not accept as keyword arguments.
+LIBPQ_ONLY_QUERY_PARAMS = ("sslmode", "channel_binding")
+
 
 class Base(DeclarativeBase):
     pass
@@ -50,7 +54,12 @@ class DatabaseManager:
         # Already async drivers
         if "+aiosqlite" in drivername or "+asyncpg" in drivername or "+aiomysql" in drivername:
             self._check_db_exist(raw_url)
-            return raw_url
+            if "+asyncpg" in drivername:
+                url = self._strip_libpq_only_params(url)
+            normalized = str(url)
+            if normalized != raw_url:
+                logger.warning("Stripped libpq-only params unsupported by asyncpg from DATABASE_URL")
+            return normalized
 
         # Map common sync schemes to async equivalents
         if drivername == "sqlite":
@@ -58,6 +67,7 @@ class DatabaseManager:
             self._check_db_exist(raw_url)
         elif drivername in ("postgresql", "postgres"):
             url = url.set(drivername="postgresql+asyncpg")
+            url = self._strip_libpq_only_params(url)
         elif drivername in ("mysql",):
             url = url.set(drivername="mysql+aiomysql")
         elif drivername in ("mariadb",):
@@ -71,6 +81,16 @@ class DatabaseManager:
         if normalized != raw_url:
             logger.warning("Adjusted database URL driver for async compatibility")
         return normalized
+
+    @staticmethod
+    def _strip_libpq_only_params(url):
+        """Remove libpq-only query params (sslmode, channel_binding) that
+        asyncpg.connect() rejects as unexpected keyword arguments."""
+        present = [key for key in LIBPQ_ONLY_QUERY_PARAMS if key in url.query]
+        if not present:
+            return url
+        logger.info(f"Removing asyncpg-incompatible query params from DATABASE_URL: {present}")
+        return url.difference_update_query(present)
 
     @staticmethod
     def _check_db_exist(raw_url: str) -> bool:
@@ -106,6 +126,11 @@ class DatabaseManager:
             engine_kwargs = {
                 "echo": settings.debug,
             }
+
+            # asyncpg takes SSL via connect_args (not a "sslmode" URL query param,
+            # which it rejects), so re-apply it here after stripping it from the URL.
+            if "+asyncpg" in make_url(database_url).drivername:
+                engine_kwargs["connect_args"] = {"ssl": "require"}
 
             # Check if we're in a Lambda environment
             is_lambda = bool(
