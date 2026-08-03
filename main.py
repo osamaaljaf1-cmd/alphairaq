@@ -143,9 +143,12 @@ include_routers_from_package(app, "routers")
 
 # 3. ثالثاً: إعداد الـ Middleware (ليغلف جميع الروابط المكتشفة)
 # MODULE_MIDDLEWARE_START
+_cors_origins_env = os.environ.get("CORS_ORIGINS", "")
+_cors_origins = [origin.strip() for origin in _cors_origins_env.split(",") if origin.strip()] or ["http://localhost:5173"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
