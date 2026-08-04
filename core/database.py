@@ -56,7 +56,7 @@ class DatabaseManager:
             self._check_db_exist(raw_url)
             if "+asyncpg" in drivername:
                 url = self._strip_libpq_only_params(url)
-            normalized = str(url)
+            normalized = url.render_as_string(hide_password=False)
             if normalized != raw_url:
                 logger.warning("Stripped libpq-only params unsupported by asyncpg from DATABASE_URL")
             return normalized
@@ -77,7 +77,7 @@ class DatabaseManager:
             logger.warning(f"Unknown database driver: {drivername}")
             return raw_url
 
-        normalized = str(url)
+        normalized = url.render_as_string(hide_password=False)
         if normalized != raw_url:
             logger.warning("Adjusted database URL driver for async compatibility")
         return normalized
