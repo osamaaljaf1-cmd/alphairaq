@@ -183,7 +183,7 @@ async def seed_permissions(db: AsyncSession = Depends(get_db)):
             try:
                 # Check if permission already exists
                 check = await db.execute(
-                    text("SELECT id FROM permissions WHERE role = :role AND page = :page"),
+                    text("SELECT id FROM permissions WHERE role = :role AND page = :page LIMIT 1"),
                     {"role": role, "page": page},
                 )
                 existing = check.scalar_one_or_none()
@@ -249,7 +249,7 @@ async def grant_visit_permissions(db: AsyncSession = Depends(get_db)):
         for page in ("doctor_visits", "pharmacy_visits"):
             try:
                 check = await db.execute(
-                    text("SELECT id FROM permissions WHERE role = :role AND page = :page"),
+                    text("SELECT id FROM permissions WHERE role = :role AND page = :page LIMIT 1"),
                     {"role": role, "page": page},
                 )
                 if check.scalar_one_or_none():
