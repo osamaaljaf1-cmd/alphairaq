@@ -5,9 +5,11 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from models.doctors import Doctors
 from services.doctors import DoctorsService
 
 # Set up logging
@@ -195,15 +197,25 @@ async def create_doctors(
 ):
     """Create a new doctors"""
     logger.debug(f"Creating new doctors with data: {data}")
-    
+
     service = DoctorsService(db)
     try:
+        normalized = (data.name or "").strip().lower()
+        if normalized:
+            dup_check = await db.execute(
+                select(Doctors).where(func.lower(func.trim(Doctors.name)) == normalized)
+            )
+            if dup_check.scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="يوجد طبيب بنفس الاسم مسبقاً")
+
         result = await service.create(data.model_dump())
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create doctors")
         
         logger.info(f"Doctors created successfully with id: {result.id}")
         return result
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.error(f"Validation error creating doctors: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -217,20 +229,39 @@ async def create_doctorss_batch(
     request: DoctorsBatchCreateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple doctorss in a single request"""
+    """Create multiple doctorss in a single request.
+
+    Skips rows whose name already exists (case/whitespace-insensitive), both
+    against existing records and duplicates within the same upload, and
+    performs a single bulk insert instead of one commit per row so large
+    imports don't hit the client's request timeout.
+    """
     logger.debug(f"Batch creating {len(request.items)} doctorss")
-    
-    service = DoctorsService(db)
-    results = []
-    
+
     try:
+        existing_result = await db.execute(select(func.lower(func.trim(Doctors.name))))
+        existing_names = {row[0] for row in existing_result.all() if row[0]}
+
+        seen_in_batch: set[str] = set()
+        new_objs: List[Doctors] = []
+        skipped = 0
+
         for item_data in request.items:
-            result = await service.create(item_data.model_dump())
-            if result:
-                results.append(result)
-        
-        logger.info(f"Batch created {len(results)} doctorss successfully")
-        return results
+            data = item_data.model_dump()
+            normalized = (data.get("name") or "").strip().lower()
+            if not normalized or normalized in existing_names or normalized in seen_in_batch:
+                skipped += 1
+                continue
+            seen_in_batch.add(normalized)
+            new_objs.append(Doctors(**data))
+
+        db.add_all(new_objs)
+        await db.commit()
+        for obj in new_objs:
+            await db.refresh(obj)
+
+        logger.info(f"Batch created {len(new_objs)} doctorss successfully, skipped {skipped} duplicates")
+        return new_objs
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
