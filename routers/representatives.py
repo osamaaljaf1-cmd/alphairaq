@@ -275,7 +275,8 @@ async def update_representatives(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
+        scope_user_id = None if current_user.role == "admin" else str(current_user.id)
+        result = await service.update(id, update_dict, user_id=scope_user_id)
         if not result:
             logger.warning(f"Representatives with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Representatives not found")
@@ -303,10 +304,11 @@ async def delete_representativess_batch(
     
     service = RepresentativesService(db)
     deleted_count = 0
-    
+    scope_user_id = None if current_user.role == "admin" else str(current_user.id)
+
     try:
         for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
+            success = await service.delete(item_id, user_id=scope_user_id)
             if success:
                 deleted_count += 1
         
@@ -329,7 +331,8 @@ async def delete_representatives(
     
     service = RepresentativesService(db)
     try:
-        success = await service.delete(id, user_id=str(current_user.id))
+        scope_user_id = None if current_user.role == "admin" else str(current_user.id)
+        success = await service.delete(id, user_id=scope_user_id)
         if not success:
             logger.warning(f"Representatives with id {id} not found for deletion")
             raise HTTPException(status_code=404, detail="Representatives not found")
