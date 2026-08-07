@@ -1,5 +1,5 @@
 from core.database import Base
-from sqlalchemy import Column, DateTime, Float, Integer, String, func
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, func
 
 
 class Payments(Base):
@@ -15,3 +15,6 @@ class Payments(Base):
     net_received = Column(Float, nullable=False)
     notes = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    rep_name = Column(String, nullable=True)
+    receipt_image = Column(Text, nullable=True)
+    receipt_captured_at = Column(DateTime(timezone=True), nullable=True)

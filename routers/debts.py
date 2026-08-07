@@ -79,9 +79,18 @@ class PaymentResponse(BaseModel):
     net_received: float
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
+    rep_name: Optional[str] = None
+    receipt_captured_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class ReceiptImageUpload(BaseModel):
+    image_base64: str
+
+
+MAX_RECEIPT_IMAGE_CHARS = 6_000_000  # ~4.3MB decoded; generous cap for a compressed JPEG
 
 
 class PaymentListResponse(BaseModel):
@@ -527,6 +536,7 @@ async def process_payment(
         returns_amount=data.returns_amount,
         net_received=net_received,
         notes=data.notes,
+        rep_name=current_user.name or current_user.email,
     )
     db.add(payment)
     await db.flush()  # Get payment.id
@@ -583,3 +593,53 @@ async def list_payments(
     items = result.scalars().all()
 
     return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+# ---------- Payment Receipt Photo (archive) ----------
+@router.post("/payments/{payment_id}/receipt-image")
+async def upload_receipt_image(
+    payment_id: int,
+    data: ReceiptImageUpload,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Attach a captured (pharmacy-stamped) receipt photo to a payment record."""
+    from sqlalchemy import select
+
+    if not data.image_base64:
+        raise HTTPException(status_code=400, detail="الصورة مطلوبة")
+    if len(data.image_base64) > MAX_RECEIPT_IMAGE_CHARS:
+        raise HTTPException(status_code=400, detail="حجم الصورة كبير جداً")
+
+    result = await db.execute(select(Payments).where(Payments.id == payment_id))
+    payment = result.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="الدفعة غير موجودة")
+
+    payment.receipt_image = data.image_base64
+    payment.receipt_captured_at = datetime.utcnow()
+    await db.commit()
+
+    logger.info(f"Receipt image saved for payment {payment_id}")
+    return {"success": True}
+
+
+@router.get("/payments/{payment_id}/receipt-image")
+async def get_receipt_image(
+    payment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Fetch the archived receipt photo for a payment, if one was captured."""
+    from sqlalchemy import select
+
+    result = await db.execute(select(Payments).where(Payments.id == payment_id))
+    payment = result.scalar_one_or_none()
+    if not payment or not payment.receipt_image:
+        raise HTTPException(status_code=404, detail="لا توجد صورة وصل لهذه الدفعة")
+
+    return {
+        "payment_id": payment.id,
+        "image_base64": payment.receipt_image,
+        "captured_at": payment.receipt_captured_at,
+    }

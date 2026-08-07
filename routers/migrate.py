@@ -50,6 +50,11 @@ ALLOWED_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("latitude", "FLOAT"),
         ("longitude", "FLOAT"),
     ],
+    "payments": [
+        ("rep_name", "VARCHAR"),
+        ("receipt_image", "TEXT"),
+        ("receipt_captured_at", "TIMESTAMP WITH TIME ZONE"),
+    ],
 }
 
 # Allowed table names for validation
