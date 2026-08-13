@@ -54,6 +54,10 @@ ALLOWED_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("rep_name", "VARCHAR"),
         ("receipt_image", "TEXT"),
         ("receipt_captured_at", "TIMESTAMP WITH TIME ZONE"),
+        ("status", "VARCHAR"),
+        ("canceled_at", "TIMESTAMP WITH TIME ZONE"),
+        ("canceled_by", "VARCHAR"),
+        ("cancel_reason", "VARCHAR"),
     ],
 }
 

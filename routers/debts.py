@@ -63,7 +63,8 @@ class PaymentDebtItem(BaseModel):
 
 class PaymentRequest(BaseModel):
     customer_name: str
-    debts: List[PaymentDebtItem]
+    debts: List[PaymentDebtItem] = []
+    manual_amount: Optional[float] = None  # used when debts is empty: a payment not tied to a specific invoice
     discount: float = 0
     returns_amount: float = 0
     notes: Optional[str] = None
@@ -81,6 +82,10 @@ class PaymentResponse(BaseModel):
     created_at: Optional[datetime] = None
     rep_name: Optional[str] = None
     receipt_captured_at: Optional[datetime] = None
+    status: Optional[str] = None
+    canceled_at: Optional[datetime] = None
+    canceled_by: Optional[str] = None
+    cancel_reason: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -91,6 +96,10 @@ class ReceiptImageUpload(BaseModel):
 
 
 MAX_RECEIPT_IMAGE_CHARS = 6_000_000  # ~4.3MB decoded; generous cap for a compressed JPEG
+
+
+class CancelPaymentRequest(BaseModel):
+    reason: Optional[str] = None
 
 
 class PaymentListResponse(BaseModel):
@@ -498,29 +507,35 @@ async def process_payment(
     """
     service = DebtsService(db)
 
-    if not data.debts:
-        raise HTTPException(status_code=400, detail="يرجى اختيار قائمة واحدة على الأقل")
-
-    # Validate all debts exist and belong to the customer
-    total_selected = 0.0
     debt_objects = []
-    for item in data.debts:
-        debt = await service.get_by_id(item.debt_id)
-        if not debt:
-            raise HTTPException(status_code=404, detail=f"الدين رقم {item.debt_id} غير موجود")
-        if debt.customer_name != data.customer_name:
-            raise HTTPException(status_code=400, detail=f"الدين رقم {item.debt_id} لا يخص هذا الزبون")
-        if debt.status == "paid":
-            raise HTTPException(status_code=400, detail=f"القائمة {debt.invoice_number} مسددة بالكامل مسبقاً")
-        if item.amount_applied <= 0:
-            raise HTTPException(status_code=400, detail="المبلغ المطبق يجب أن يكون أكبر من صفر")
-        if item.amount_applied > debt.remaining_amount:
+    if data.debts:
+        # Validate all debts exist and belong to the customer
+        total_selected = 0.0
+        for item in data.debts:
+            debt = await service.get_by_id(item.debt_id)
+            if not debt:
+                raise HTTPException(status_code=404, detail=f"الدين رقم {item.debt_id} غير موجود")
+            if debt.customer_name != data.customer_name:
+                raise HTTPException(status_code=400, detail=f"الدين رقم {item.debt_id} لا يخص هذا الزبون")
+            if debt.status == "paid":
+                raise HTTPException(status_code=400, detail=f"القائمة {debt.invoice_number} مسددة بالكامل مسبقاً")
+            if item.amount_applied <= 0:
+                raise HTTPException(status_code=400, detail="المبلغ المطبق يجب أن يكون أكبر من صفر")
+            if item.amount_applied > debt.remaining_amount:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"المبلغ المطبق ({item.amount_applied}) أكبر من المبلغ المتبقي ({debt.remaining_amount}) للقائمة {debt.invoice_number}",
+                )
+            total_selected += item.amount_applied
+            debt_objects.append((debt, item.amount_applied))
+    else:
+        # No invoice selected: a manual/unallocated payment on account.
+        if not data.manual_amount or data.manual_amount <= 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"المبلغ المطبق ({item.amount_applied}) أكبر من المبلغ المتبقي ({debt.remaining_amount}) للقائمة {debt.invoice_number}",
+                detail="يرجى اختيار قائمة واحدة على الأقل أو إدخال مبلغ يدوي أكبر من صفر",
             )
-        total_selected += item.amount_applied
-        debt_objects.append((debt, item.amount_applied))
+        total_selected = data.manual_amount
 
     # Calculate net received
     net_received = total_selected - data.discount - data.returns_amount
@@ -537,6 +552,7 @@ async def process_payment(
         net_received=net_received,
         notes=data.notes,
         rep_name=current_user.name or current_user.email,
+        status="active",
     )
     db.add(payment)
     await db.flush()  # Get payment.id
@@ -565,6 +581,57 @@ async def process_payment(
     await db.refresh(payment)
 
     logger.info(f"Payment {payment.id} processed: {total_selected} - {data.discount} - {data.returns_amount} = {net_received}")
+    return payment
+
+
+@router.post("/payments/{payment_id}/cancel", response_model=PaymentResponse)
+async def cancel_payment(
+    payment_id: int,
+    data: CancelPaymentRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Cancel a previously recorded payment, restoring any debts it was applied to."""
+    from sqlalchemy import select
+
+    result = await db.execute(select(Payments).where(Payments.id == payment_id))
+    payment = result.scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="الدفعة غير موجودة")
+    if payment.status == "canceled":
+        raise HTTPException(status_code=400, detail="هذه الدفعة ملغاة مسبقاً")
+
+    details_result = await db.execute(
+        select(PaymentDetails).where(PaymentDetails.payment_id == payment_id)
+    )
+    details = details_result.scalars().all()
+
+    service = DebtsService(db)
+    for detail in details:
+        debt = await service.get_by_id(detail.debt_id)
+        if not debt:
+            # Debt was deleted separately; nothing to restore for this portion.
+            logger.warning(f"Cancel payment {payment_id}: debt {detail.debt_id} no longer exists")
+            continue
+        new_remaining = min(debt.remaining_amount + detail.amount_applied, debt.amount)
+        new_remaining = max(new_remaining, 0)
+        debt.remaining_amount = round(new_remaining, 2)
+        if debt.remaining_amount >= debt.amount - 0.01:
+            debt.status = "unpaid"
+        elif debt.remaining_amount <= 0.01:
+            debt.status = "paid"
+        else:
+            debt.status = "partial"
+
+    payment.status = "canceled"
+    payment.canceled_at = datetime.utcnow()
+    payment.canceled_by = current_user.name or current_user.email
+    payment.cancel_reason = data.reason
+
+    await db.commit()
+    await db.refresh(payment)
+
+    logger.info(f"Payment {payment_id} canceled by {payment.canceled_by}")
     return payment
 
 

@@ -18,3 +18,7 @@ class Payments(Base):
     rep_name = Column(String, nullable=True)
     receipt_image = Column(Text, nullable=True)
     receipt_captured_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String, nullable=True)  # active (default/NULL), canceled
+    canceled_at = Column(DateTime(timezone=True), nullable=True)
+    canceled_by = Column(String, nullable=True)
+    cancel_reason = Column(String, nullable=True)
