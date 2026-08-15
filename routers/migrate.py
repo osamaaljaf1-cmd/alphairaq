@@ -186,39 +186,46 @@ async def seed_permissions(db: AsyncSession = Depends(get_db)):
     Only inserts rows that don't already exist (idempotent).
     Admin role gets can_view=True by default for all pages.
     doctor_visits and pharmacy_visits get can_view=True for ALL roles.
+
+    Does one SELECT to see what already exists, then a single bulk INSERT for
+    whatever is missing, instead of a round trip per role/page combo (this
+    endpoint is called on every /permissions page load, so 100+ sequential
+    queries was adding tens of seconds to the page load).
     """
     results = []
-    for role in _SEED_ROLES:
-        for page in _SEED_PAGES:
-            try:
-                # Check if permission already exists
-                check = await db.execute(
-                    text("SELECT id FROM permissions WHERE role = :role AND page = :page LIMIT 1"),
-                    {"role": role, "page": page},
-                )
-                existing = check.scalar_one_or_none()
-                if existing:
-                    continue  # Already exists, skip
 
-                # Admin gets can_view for all pages; all roles get can_view for visit pages
-                default_view = role == "admin" or page in _DEFAULT_VIEW_ALL_PAGES
-                await db.execute(
-                    text(
-                        "INSERT INTO permissions (role, page, can_view, can_add, can_edit, can_delete, can_import, can_export) "
-                        "VALUES (:role, :page, :can_view, false, false, false, false, false)"
-                    ),
-                    {"role": role, "page": page, "can_view": default_view},
-                )
-                await db.commit()
-                results.append(f"{role}/{page}: added (can_view={default_view})")
-            except Exception as e:
-                await db.rollback()
-                if "duplicate" in str(e).lower() or "already exists" in str(e).lower():
-                    results.append(f"{role}/{page}: already exists")
-                else:
-                    results.append(f"{role}/{page}: error - {str(e)}")
+    existing_result = await db.execute(text("SELECT role, page FROM permissions"))
+    existing_pairs = {(row[0], row[1]) for row in existing_result.fetchall()}
 
-    if not results:
+    to_insert = [
+        {
+            "role": role,
+            "page": page,
+            "can_view": role == "admin" or page in _DEFAULT_VIEW_ALL_PAGES,
+        }
+        for role in _SEED_ROLES
+        for page in _SEED_PAGES
+        if (role, page) not in existing_pairs
+    ]
+
+    if to_insert:
+        try:
+            await db.execute(
+                text(
+                    "INSERT INTO permissions (role, page, can_view, can_add, can_edit, can_delete, can_import, can_export) "
+                    "VALUES (:role, :page, :can_view, false, false, false, false, false)"
+                ),
+                to_insert,
+            )
+            await db.commit()
+            results.extend(
+                f"{item['role']}/{item['page']}: added (can_view={item['can_view']})"
+                for item in to_insert
+            )
+        except Exception as e:
+            await db.rollback()
+            results.append(f"bulk insert error: {str(e)}")
+    else:
         results.append("All permission records already exist")
 
     return {"success": True, "results": results}
