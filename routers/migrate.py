@@ -172,6 +172,7 @@ _SEED_PAGES = (
     "dashboard", "orders", "returns", "agreements", "target", "customers",
     "items", "map", "chat", "admin_users", "permissions", "areas",
     "rep_operations", "doctor_visits", "pharmacy_visits", "debts",
+    "rep_activity_map",
 )
 
 # Pages that should have can_view=True for ALL roles by default
