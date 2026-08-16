@@ -163,6 +163,42 @@ async def add_missing_columns(db: AsyncSession = Depends(get_db)):
         await db.rollback()
         results.append(f"messages table: error - {str(e)}")
 
+    # Create custom_roles table if not exists (static DDL, no user input)
+    try:
+        await db.execute(text("""
+            CREATE TABLE IF NOT EXISTS custom_roles (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR NOT NULL UNIQUE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """))
+        await db.commit()
+        results.append("custom_roles table: created or already exists")
+    except Exception as e:
+        await db.rollback()
+        results.append(f"custom_roles table: error - {str(e)}")
+
+    # Create rep_targets table if not exists (static DDL, no user input)
+    try:
+        await db.execute(text("""
+            CREATE TABLE IF NOT EXISTS rep_targets (
+                id SERIAL PRIMARY KEY,
+                representative_id INTEGER NOT NULL,
+                year INTEGER NOT NULL,
+                month INTEGER NOT NULL,
+                product_id INTEGER,
+                target_qty FLOAT,
+                target_amount FLOAT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """))
+        await db.commit()
+        results.append("rep_targets table: created or already exists")
+    except Exception as e:
+        await db.rollback()
+        results.append(f"rep_targets table: error - {str(e)}")
+
     return {"results": results}
 
 
@@ -194,6 +230,15 @@ async def seed_permissions(db: AsyncSession = Depends(get_db)):
     """
     results = []
 
+    # Custom roles (added via /api/v1/custom-roles) also need a row per page —
+    # this matters when a new page is added later and this endpoint re-runs.
+    all_roles = list(_SEED_ROLES)
+    try:
+        custom_result = await db.execute(text("SELECT name FROM custom_roles"))
+        all_roles.extend(row[0] for row in custom_result.fetchall())
+    except Exception:
+        pass  # custom_roles table not migrated yet on this environment
+
     existing_result = await db.execute(text("SELECT role, page FROM permissions"))
     existing_pairs = {(row[0], row[1]) for row in existing_result.fetchall()}
 
@@ -203,7 +248,7 @@ async def seed_permissions(db: AsyncSession = Depends(get_db)):
             "page": page,
             "can_view": role == "admin" or page in _DEFAULT_VIEW_ALL_PAGES,
         }
-        for role in _SEED_ROLES
+        for role in all_roles
         for page in _SEED_PAGES
         if (role, page) not in existing_pairs
     ]
