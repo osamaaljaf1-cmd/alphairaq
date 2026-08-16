@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -104,3 +104,63 @@ async def set_rep_targets(
     await db.commit()
     logger.info(f"Targets saved for rep {data.representative_id} {data.year}-{data.month}")
     return await _load_targets(db, data.representative_id, data.year, data.month)
+
+
+class BulkTargetItem(BaseModel):
+    representative_id: int
+    product_id: int
+    target_qty: float
+
+
+class BulkSetTargetsRequest(BaseModel):
+    year: int
+    month: int
+    items: List[BulkTargetItem]
+
+
+class BulkSetTargetsResponse(BaseModel):
+    inserted: int
+    updated: int
+
+
+@router.put("/bulk", response_model=BulkSetTargetsResponse)
+async def bulk_set_rep_targets(
+    data: BulkSetTargetsRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Upsert per-rep per-product target quantities for many reps at once
+    (e.g. an Excel import with rep name + product name + quantity columns
+    covering several representatives). Unlike PUT /rep-targets, this only
+    touches the (rep, product) rows given here and leaves every other
+    product target already saved for those reps/month untouched."""
+    inserted = 0
+    updated = 0
+    for item in data.items:
+        result = await db.execute(
+            select(RepTargets).where(
+                RepTargets.representative_id == item.representative_id,
+                RepTargets.year == data.year,
+                RepTargets.month == data.month,
+                RepTargets.product_id == item.product_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row:
+            row.target_qty = item.target_qty
+            updated += 1
+        else:
+            db.add(RepTargets(
+                representative_id=item.representative_id,
+                year=data.year,
+                month=data.month,
+                product_id=item.product_id,
+                target_qty=item.target_qty,
+            ))
+            inserted += 1
+
+    await db.commit()
+    logger.info(
+        f"Bulk rep targets for {data.year}-{data.month}: {inserted} inserted, {updated} updated"
+    )
+    return BulkSetTargetsResponse(inserted=inserted, updated=updated)
