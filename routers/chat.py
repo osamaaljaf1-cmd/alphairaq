@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -121,7 +121,7 @@ async def send_message(
             raise HTTPException(status_code=403, detail="لست عضواً في هذه المجموعة")
 
     try:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_dt = datetime.now(timezone.utc)
         msg = Chat_messages(
             user_id=current_user.id,
             sender_name=current_user.name or current_user.id[:8],
@@ -129,7 +129,7 @@ async def send_message(
             receiver_name=data.receiver_name,
             message_text=data.message_text,
             is_read=False,
-            created_at=now,
+            created_at=now_dt,
         )
         db.add(msg)
         await db.commit()
@@ -143,7 +143,7 @@ async def send_message(
             receiver_name=msg.receiver_name,
             message_text=msg.message_text,
             is_read=msg.is_read,
-            created_at=str(msg.created_at) if msg.created_at else now,
+            created_at=str(msg.created_at) if msg.created_at else str(now_dt),
         )
     except Exception as e:
         await db.rollback()
@@ -550,7 +550,7 @@ async def heartbeat(
 ):
     """Update user's online presence (call every 30s from frontend)"""
     try:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_dt = datetime.now(timezone.utc)
         display_name = current_user.name or current_user.id[:8]
 
         # Check if presence record exists
@@ -560,14 +560,14 @@ async def heartbeat(
 
         if presence:
             presence.is_online = True
-            presence.last_active_at = now
+            presence.last_active_at = now_dt
             presence.display_name = display_name
         else:
             presence = User_presence(
                 user_id=current_user.id,
                 display_name=display_name,
                 is_online=True,
-                last_active_at=now,
+                last_active_at=now_dt,
             )
             db.add(presence)
 
@@ -591,14 +591,18 @@ async def get_online_users(
         result = await db.execute(q)
         all_presence = result.scalars().all()
 
-        cutoff = datetime.now() - timedelta(seconds=60)
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=60)
 
         items = []
         for p in all_presence:
             is_online = False
             if p.last_active_at:
                 try:
-                    last_active = p.last_active_at if isinstance(p.last_active_at, datetime) else datetime.strptime(str(p.last_active_at), "%Y-%m-%d %H:%M:%S")
+                    last_active = p.last_active_at
+                    if not isinstance(last_active, datetime):
+                        last_active = datetime.strptime(str(last_active), "%Y-%m-%d %H:%M:%S")
+                    if last_active.tzinfo is None:
+                        last_active = last_active.replace(tzinfo=timezone.utc)
                     is_online = last_active > cutoff
                 except Exception:
                     is_online = False
