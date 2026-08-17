@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, and_, select, func, update
+from sqlalchemy import or_, and_, select, func, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -13,6 +13,8 @@ from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.chat_messages import Chat_messages
 from models.user_presence import User_presence
+from models.chat_groups import Chat_groups
+from models.chat_group_members import Chat_group_members
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,48 @@ class UnreadCountResponse(BaseModel):
 
 
 TEAM_CHANNEL_ID = "team"
+GROUP_PREFIX = "group:"
+
+
+async def _is_group_member(db: AsyncSession, group_id: int, user_id: str) -> bool:
+    q = select(Chat_group_members).where(
+        and_(
+            Chat_group_members.group_id == group_id,
+            Chat_group_members.user_id == user_id,
+        )
+    )
+    result = await db.execute(q)
+    return result.scalar_one_or_none() is not None
+
+
+# ---------- Group schemas ----------
+class CreateGroupRequest(BaseModel):
+    name: str
+    member_ids: list[str] = []
+    member_names: dict[str, str] = {}
+
+
+class GroupMemberResponse(BaseModel):
+    user_id: str
+    user_name: Optional[str] = None
+
+
+class GroupResponse(BaseModel):
+    id: int
+    name: str
+    created_by: str
+    created_by_name: Optional[str] = None
+    created_at: Optional[str] = None
+    member_count: int
+    members: list[GroupMemberResponse] = []
+
+    class Config:
+        from_attributes = True
+
+
+class AddMemberRequest(BaseModel):
+    user_id: str
+    user_name: Optional[str] = None
 
 
 # ---------- Routes ----------
@@ -69,7 +113,13 @@ async def send_message(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Send a chat message to another user"""
+    """Send a chat message to another user, the team channel, or a group.
+    Group sends are rejected for non-members."""
+    if data.receiver_id.startswith(GROUP_PREFIX):
+        group_id_str = data.receiver_id[len(GROUP_PREFIX):]
+        if not group_id_str.isdigit() or not await _is_group_member(db, int(group_id_str), current_user.id):
+            raise HTTPException(status_code=403, detail="لست عضواً في هذه المجموعة")
+
     try:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         msg = Chat_messages(
@@ -167,6 +217,220 @@ async def get_conversation(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------- Groups ----------
+@router.post("/groups", response_model=GroupResponse, status_code=201)
+async def create_group(
+    data: CreateGroupRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a private group. The creator is always a member; any
+    member_ids given are added alongside them. Only members can ever see
+    the group or its messages."""
+    if not data.name.strip():
+        raise HTTPException(status_code=400, detail="اسم المجموعة مطلوب")
+    try:
+        group = Chat_groups(
+            name=data.name.strip(),
+            created_by=current_user.id,
+            created_by_name=current_user.name or current_user.id[:8],
+        )
+        db.add(group)
+        await db.flush()
+
+        member_ids = {current_user.id, *data.member_ids}
+        for uid in member_ids:
+            db.add(Chat_group_members(
+                group_id=group.id,
+                user_id=uid,
+                user_name=current_user.name if uid == current_user.id else data.member_names.get(uid, uid[:8]),
+            ))
+
+        await db.commit()
+        await db.refresh(group)
+
+        return GroupResponse(
+            id=group.id,
+            name=group.name,
+            created_by=group.created_by,
+            created_by_name=group.created_by_name,
+            created_at=str(group.created_at) if group.created_at else None,
+            member_count=len(member_ids),
+            members=[],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error creating group: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/groups", response_model=list[GroupResponse])
+async def list_my_groups(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List every group the current user is a member of."""
+    try:
+        my_group_ids_q = select(Chat_group_members.group_id).where(
+            Chat_group_members.user_id == current_user.id
+        )
+        result = await db.execute(my_group_ids_q)
+        group_ids = [r[0] for r in result.all()]
+        if not group_ids:
+            return []
+
+        groups_q = select(Chat_groups).where(Chat_groups.id.in_(group_ids))
+        groups_result = await db.execute(groups_q)
+        groups = groups_result.scalars().all()
+
+        members_q = select(Chat_group_members).where(Chat_group_members.group_id.in_(group_ids))
+        members_result = await db.execute(members_q)
+        all_members = members_result.scalars().all()
+        members_by_group: dict[int, list] = {}
+        for m in all_members:
+            members_by_group.setdefault(m.group_id, []).append(
+                GroupMemberResponse(user_id=m.user_id, user_name=m.user_name)
+            )
+
+        return [
+            GroupResponse(
+                id=g.id,
+                name=g.name,
+                created_by=g.created_by,
+                created_by_name=g.created_by_name,
+                created_at=str(g.created_at) if g.created_at else None,
+                member_count=len(members_by_group.get(g.id, [])),
+                members=members_by_group.get(g.id, []),
+            )
+            for g in groups
+        ]
+    except Exception as e:
+        logger.error(f"Error listing groups: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/groups/{group_id}/messages", response_model=ConversationListResponse)
+async def get_group_messages(
+    group_id: int,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a group's messages. 403s if the current user isn't a member —
+    non-members can never read a group's messages."""
+    if not await _is_group_member(db, group_id, current_user.id):
+        raise HTTPException(status_code=403, detail="لست عضواً في هذه المجموعة")
+
+    try:
+        receiver_id = f"{GROUP_PREFIX}{group_id}"
+        condition = Chat_messages.receiver_id == receiver_id
+
+        count_q = select(func.count()).select_from(Chat_messages).where(condition)
+        total_result = await db.execute(count_q)
+        total = total_result.scalar() or 0
+
+        q = (
+            select(Chat_messages)
+            .where(condition)
+            .order_by(Chat_messages.created_at.asc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await db.execute(q)
+        messages = result.scalars().all()
+
+        items = [
+            MessageResponse(
+                id=m.id,
+                user_id=m.user_id,
+                sender_name=m.sender_name,
+                receiver_id=m.receiver_id,
+                receiver_name=m.receiver_name,
+                message_text=m.message_text,
+                is_read=m.is_read,
+                created_at=str(m.created_at) if m.created_at else None,
+            )
+            for m in messages
+        ]
+
+        return ConversationListResponse(items=items, total=total)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting group messages: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/groups/{group_id}/members", response_model=GroupMemberResponse, status_code=201)
+async def add_group_member(
+    group_id: int,
+    data: AddMemberRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a member to a group. Only existing members can add people."""
+    if not await _is_group_member(db, group_id, current_user.id):
+        raise HTTPException(status_code=403, detail="لست عضواً في هذه المجموعة")
+
+    try:
+        if await _is_group_member(db, group_id, data.user_id):
+            raise HTTPException(status_code=400, detail="المستخدم عضو بالفعل")
+
+        member = Chat_group_members(
+            group_id=group_id,
+            user_id=data.user_id,
+            user_name=data.user_name or data.user_id[:8],
+        )
+        db.add(member)
+        await db.commit()
+        return GroupMemberResponse(user_id=member.user_id, user_name=member.user_name)
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error adding group member: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/groups/{group_id}/members/{user_id}", status_code=204)
+async def remove_group_member(
+    group_id: int,
+    user_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Leave a group, or (if you're the creator) remove another member."""
+    group_q = select(Chat_groups).where(Chat_groups.id == group_id)
+    group_result = await db.execute(group_q)
+    group = group_result.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=404, detail="المجموعة غير موجودة")
+
+    is_self = user_id == current_user.id
+    is_creator = group.created_by == current_user.id
+    if not is_self and not is_creator:
+        raise HTTPException(status_code=403, detail="غير مصرح لك بإزالة هذا العضو")
+
+    try:
+        await db.execute(
+            delete(Chat_group_members).where(
+                and_(
+                    Chat_group_members.group_id == group_id,
+                    Chat_group_members.user_id == user_id,
+                )
+            )
+        )
+        await db.commit()
+        return None
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error removing group member: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/team-messages", response_model=ConversationListResponse)
 async def get_team_messages(
     skip: int = Query(0, ge=0),
@@ -228,6 +492,7 @@ async def get_recent_contacts(
                 Chat_messages.receiver_id == current_user.id,
             ),
             Chat_messages.receiver_id != TEAM_CHANNEL_ID,
+            Chat_messages.receiver_id.notlike(f"{GROUP_PREFIX}%"),
         )
         q = select(Chat_messages).where(condition).order_by(Chat_messages.created_at.desc())
         result = await db.execute(q)
