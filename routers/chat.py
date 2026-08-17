@@ -59,6 +59,9 @@ class UnreadCountResponse(BaseModel):
     unread_count: int
 
 
+TEAM_CHANNEL_ID = "team"
+
+
 # ---------- Routes ----------
 @router.post("/send", response_model=MessageResponse, status_code=201)
 async def send_message(
@@ -164,6 +167,53 @@ async def get_conversation(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/team-messages", response_model=ConversationListResponse)
+async def get_team_messages(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the team-wide broadcast channel: every message ever sent with
+    receiver_id == 'team', from any sender. Not a 1-on-1 thread, so there's
+    no read-marking here (a broadcast has many readers)."""
+    try:
+        condition = Chat_messages.receiver_id == TEAM_CHANNEL_ID
+
+        count_q = select(func.count()).select_from(Chat_messages).where(condition)
+        total_result = await db.execute(count_q)
+        total = total_result.scalar() or 0
+
+        q = (
+            select(Chat_messages)
+            .where(condition)
+            .order_by(Chat_messages.created_at.asc())
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await db.execute(q)
+        messages = result.scalars().all()
+
+        items = [
+            MessageResponse(
+                id=m.id,
+                user_id=m.user_id,
+                sender_name=m.sender_name,
+                receiver_id=m.receiver_id,
+                receiver_name=m.receiver_name,
+                message_text=m.message_text,
+                is_read=m.is_read,
+                created_at=str(m.created_at) if m.created_at else None,
+            )
+            for m in messages
+        ]
+
+        return ConversationListResponse(items=items, total=total)
+    except Exception as e:
+        logger.error(f"Error getting team messages: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/recent-contacts", response_model=list[dict])
 async def get_recent_contacts(
     current_user: UserResponse = Depends(get_current_user),
@@ -171,10 +221,13 @@ async def get_recent_contacts(
 ):
     """Get list of users the current user has chatted with, with last message and unread count"""
     try:
-        # Get all messages involving current user
-        condition = or_(
-            Chat_messages.user_id == current_user.id,
-            Chat_messages.receiver_id == current_user.id,
+        # Get all messages involving current user, excluding the team broadcast channel
+        condition = and_(
+            or_(
+                Chat_messages.user_id == current_user.id,
+                Chat_messages.receiver_id == current_user.id,
+            ),
+            Chat_messages.receiver_id != TEAM_CHANNEL_ID,
         )
         q = select(Chat_messages).where(condition).order_by(Chat_messages.created_at.desc())
         result = await db.execute(q)
