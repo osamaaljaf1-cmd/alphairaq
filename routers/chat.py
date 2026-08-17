@@ -553,10 +553,20 @@ async def heartbeat(
         now_dt = datetime.now(timezone.utc)
         display_name = current_user.name or current_user.id[:8]
 
-        # Check if presence record exists
-        q = select(User_presence).where(User_presence.user_id == current_user.id)
+        # Check if presence record exists. There's no unique constraint on
+        # user_id, so a race between concurrent heartbeats can leave
+        # duplicate rows for the same user — tolerate that (keep the
+        # newest, delete the rest) instead of crashing on it.
+        q = (
+            select(User_presence)
+            .where(User_presence.user_id == current_user.id)
+            .order_by(User_presence.id.desc())
+        )
         result = await db.execute(q)
-        presence = result.scalar_one_or_none()
+        rows = result.scalars().all()
+        presence = rows[0] if rows else None
+        for extra in rows[1:]:
+            await db.delete(extra)
 
         if presence:
             presence.is_online = True
