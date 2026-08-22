@@ -6,17 +6,36 @@ from datetime import datetime, date
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from services.orders import OrdersService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from models.representatives import Representatives
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/entities/orders", tags=["orders"])
+
+
+async def _delete_owner_filter(db: AsyncSession, current_user: UserResponse) -> Optional[str]:
+    """Resolve the user_id to pass to OrdersService.delete(): None lets a
+    privileged caller delete any order, a string restricts to their own.
+
+    Reps may only delete their own orders. Everyone else (admin, accounting,
+    manager, delivery, or any account with no representative row at all,
+    e.g. an app_user-only account) can delete any order — mirrors the
+    role split used for customer visibility in services/area_scope.py."""
+    rep_result = await db.execute(
+        select(Representatives).where(Representatives.user_id == current_user.id)
+    )
+    rep = rep_result.scalar_one_or_none()
+    if rep and rep.role == "rep":
+        return str(current_user.id)
+    return None
 
 
 # ---------- Pydantic Schemas ----------
@@ -338,15 +357,17 @@ async def delete_orderss_batch(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple orderss by their IDs (requires ownership)"""
+    """Delete multiple orderss by their IDs (requires ownership, unless the
+    caller is a privileged role — see _delete_owner_filter)"""
     logger.debug(f"Batch deleting {len(request.ids)} orderss")
-    
+
     service = OrdersService(db)
     deleted_count = 0
-    
+    owner_filter = await _delete_owner_filter(db, current_user)
+
     try:
         for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
+            success = await service.delete(item_id, user_id=owner_filter)
             if success:
                 deleted_count += 1
         
@@ -364,12 +385,14 @@ async def delete_orders(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single orders by ID (requires ownership)"""
+    """Delete a single orders by ID (requires ownership, unless the caller
+    is a privileged role — see _delete_owner_filter)"""
     logger.debug(f"Deleting orders with id: {id}")
-    
+
     service = OrdersService(db)
     try:
-        success = await service.delete(id, user_id=str(current_user.id))
+        owner_filter = await _delete_owner_filter(db, current_user)
+        success = await service.delete(id, user_id=owner_filter)
         if not success:
             logger.warning(f"Orders with id {id} not found for deletion")
             raise HTTPException(status_code=404, detail="Orders not found")
