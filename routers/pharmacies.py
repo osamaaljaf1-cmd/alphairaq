@@ -15,6 +15,7 @@ from models.pharmacies import Pharmacies
 from services.pharmacies import PharmaciesService
 from services.doctors import DoctorsService
 from services.area_scope import get_customer_scope
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -382,14 +383,17 @@ async def update_pharmacies(
 @router.delete("/batch")
 async def delete_pharmaciess_batch(
     request: PharmaciesBatchDeleteRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple pharmaciess by their IDs"""
+    """Delete multiple pharmaciess by their IDs (requires can_delete permission
+    on the customers page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} pharmaciess")
-    
+
     service = PharmaciesService(db)
     deleted_count = 0
-    
+
     try:
         for item_id in request.ids:
             success = await service.delete(item_id)
@@ -407,11 +411,14 @@ async def delete_pharmaciess_batch(
 @router.delete("/{id}")
 async def delete_pharmacies(
     id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single pharmacies by ID"""
+    """Delete a single pharmacies by ID (requires can_delete permission on the
+    customers page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "delete")
     logger.debug(f"Deleting pharmacies with id: {id}")
-    
+
     service = PharmaciesService(db)
     try:
         success = await service.delete(id)

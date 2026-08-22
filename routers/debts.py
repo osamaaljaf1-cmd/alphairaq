@@ -17,6 +17,7 @@ from models.payments import Payments
 from models.payment_details import PaymentDetails
 from schemas.auth import UserResponse
 from services.debts import DebtsService
+from services.permission_check import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -376,7 +377,8 @@ async def delete_debt(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Delete a debt record"""
+    """Delete a debt record (requires can_delete permission on the debts page)"""
+    await require_permission(db, current_user, "debts", "delete")
     service = DebtsService(db)
     success = await service.delete(debt_id)
     if not success:
@@ -591,8 +593,12 @@ async def cancel_payment(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Cancel a previously recorded payment, restoring any debts it was applied to."""
+    """Cancel a previously recorded payment, restoring any debts it was applied to.
+    Requires can_delete permission on the debts page (matches the frontend's
+    canDelete('debts') gate on this action)."""
     from sqlalchemy import select
+
+    await require_permission(db, current_user, "debts", "delete")
 
     result = await db.execute(select(Payments).where(Payments.id == payment_id))
     payment = result.scalar_one_or_none()

@@ -10,10 +10,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.auth import get_current_user
+from schemas.auth import UserResponse
 from models.agreements import Agreements
 from models.doctors import Doctors
 from models.products import Products
 from services.agreements import AgreementsService
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -419,14 +422,17 @@ async def update_agreements(
 @router.delete("/batch")
 async def delete_agreementss_batch(
     request: AgreementsBatchDeleteRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple agreementss by their IDs"""
+    """Delete multiple agreementss by their IDs (requires can_delete permission
+    on the agreements page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "agreements", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} agreementss")
-    
+
     service = AgreementsService(db)
     deleted_count = 0
-    
+
     try:
         for item_id in request.ids:
             success = await service.delete(item_id)
@@ -444,11 +450,14 @@ async def delete_agreementss_batch(
 @router.delete("/{id}")
 async def delete_agreements(
     id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single agreements by ID"""
+    """Delete a single agreements by ID (requires can_delete permission on the
+    agreements page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "agreements", "delete")
     logger.debug(f"Deleting agreements with id: {id}")
-    
+
     service = AgreementsService(db)
     try:
         success = await service.delete(id)

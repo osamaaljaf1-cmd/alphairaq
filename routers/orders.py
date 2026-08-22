@@ -14,6 +14,7 @@ from services.orders import OrdersService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.representatives import Representatives
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -357,8 +358,10 @@ async def delete_orderss_batch(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple orderss by their IDs (requires ownership, unless the
-    caller is a privileged role — see _delete_owner_filter)"""
+    """Delete multiple orderss by their IDs. Requires can_delete permission
+    on the orders page; reps are further restricted to their own orders
+    (see _delete_owner_filter)."""
+    await require_permission(db, current_user, "orders", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} orderss")
 
     service = OrdersService(db)
@@ -385,8 +388,10 @@ async def delete_orders(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single orders by ID (requires ownership, unless the caller
-    is a privileged role — see _delete_owner_filter)"""
+    """Delete a single orders by ID. Requires can_delete permission on the
+    orders page; reps are further restricted to their own orders (see
+    _delete_owner_filter)."""
+    await require_permission(db, current_user, "orders", "delete")
     logger.debug(f"Deleting orders with id: {id}")
 
     service = OrdersService(db)

@@ -14,6 +14,7 @@ from services.returns import ReturnsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.representatives import Representatives
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -336,8 +337,10 @@ async def delete_returnss_batch(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple returnss by their IDs (requires ownership, unless the
-    caller is a privileged role — see _delete_owner_filter)"""
+    """Delete multiple returnss by their IDs. Requires can_delete permission
+    on the returns page; reps are further restricted to their own returns
+    (see _delete_owner_filter)."""
+    await require_permission(db, current_user, "returns", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} returnss")
 
     service = ReturnsService(db)
@@ -364,8 +367,10 @@ async def delete_returns(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single returns by ID (requires ownership, unless the caller
-    is a privileged role — see _delete_owner_filter)"""
+    """Delete a single returns by ID. Requires can_delete permission on the
+    returns page; reps are further restricted to their own returns (see
+    _delete_owner_filter)."""
+    await require_permission(db, current_user, "returns", "delete")
     logger.debug(f"Deleting returns with id: {id}")
 
     service = ReturnsService(db)

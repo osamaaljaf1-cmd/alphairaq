@@ -8,7 +8,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.auth import get_current_user
+from schemas.auth import UserResponse
 from services.areas import AreasService
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -276,14 +279,17 @@ async def update_areas(
 @router.delete("/batch")
 async def delete_areass_batch(
     request: AreasBatchDeleteRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple areass by their IDs"""
+    """Delete multiple areass by their IDs (requires can_delete permission
+    on the areas page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "areas", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} areass")
-    
+
     service = AreasService(db)
     deleted_count = 0
-    
+
     try:
         for item_id in request.ids:
             success = await service.delete(item_id)
@@ -301,11 +307,14 @@ async def delete_areass_batch(
 @router.delete("/{id}")
 async def delete_areas(
     id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single areas by ID"""
+    """Delete a single areas by ID (requires can_delete permission on the
+    areas page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "areas", "delete")
     logger.debug(f"Deleting areas with id: {id}")
-    
+
     service = AreasService(db)
     try:
         success = await service.delete(id)

@@ -8,7 +8,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.auth import get_current_user
+from schemas.auth import UserResponse
 from services.products import ProductsService
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -291,14 +294,17 @@ async def update_products(
 @router.delete("/batch")
 async def delete_productss_batch(
     request: ProductsBatchDeleteRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple productss by their IDs"""
+    """Delete multiple productss by their IDs (requires can_delete permission
+    on the items page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "items", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} productss")
-    
+
     service = ProductsService(db)
     deleted_count = 0
-    
+
     try:
         for item_id in request.ids:
             success = await service.delete(item_id)
@@ -316,11 +322,14 @@ async def delete_productss_batch(
 @router.delete("/{id}")
 async def delete_products(
     id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single products by ID"""
+    """Delete a single products by ID (requires can_delete permission on the
+    items page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "items", "delete")
     logger.debug(f"Deleting products with id: {id}")
-    
+
     service = ProductsService(db)
     try:
         success = await service.delete(id)
