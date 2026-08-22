@@ -90,6 +90,7 @@ class PaymentResponse(BaseModel):
     handed_over: Optional[bool] = None
     handed_over_at: Optional[datetime] = None
     handed_over_by: Optional[str] = None
+    applied_invoices: List[str] = []
 
     class Config:
         from_attributes = True
@@ -706,11 +707,25 @@ async def get_handover_summary(
 ):
     """Breaks settled payments down into 'still with the rep' (collected but
     not yet handed to accounting) vs 'confirmed received by accounting',
-    grouped by rep. Cancelled payments are excluded entirely."""
+    grouped by rep. Cancelled payments are excluded entirely. Each pending
+    payment carries the invoice number(s) it was applied to, so accounting
+    can see whether it's a full or partial settlement of a specific invoice
+    (or an unallocated manual payment, if the list is empty)."""
     from sqlalchemy import select
 
     result = await db.execute(select(Payments).order_by(Payments.created_at.desc()))
     all_payments = result.scalars().all()
+
+    pending_ids = [p.id for p in all_payments if p.status != "canceled" and not p.handed_over]
+    invoices_by_payment: dict[int, list[str]] = {}
+    if pending_ids:
+        detail_rows = await db.execute(
+            select(PaymentDetails.payment_id, Debts.invoice_number)
+            .join(Debts, Debts.id == PaymentDetails.debt_id)
+            .where(PaymentDetails.payment_id.in_(pending_ids))
+        )
+        for payment_id, invoice_number in detail_rows.all():
+            invoices_by_payment.setdefault(payment_id, []).append(invoice_number)
 
     pending_total = 0.0
     confirmed_total = 0.0
@@ -732,7 +747,10 @@ async def get_handover_summary(
                 payments=[],
             )
         reps[key].pending_total += p.net_received
-        reps[key].payments.append(p)
+        payment_resp = PaymentResponse.model_validate(p).model_copy(
+            update={"applied_invoices": invoices_by_payment.get(p.id, [])}
+        )
+        reps[key].payments.append(payment_resp)
 
     return HandoverSummaryResponse(
         reps=sorted(reps.values(), key=lambda r: -r.pending_total),
