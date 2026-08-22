@@ -660,7 +660,7 @@ async def cancel_payment(
             debt.status = "partial"
 
     payment.status = "canceled"
-    payment.canceled_at = datetime.utcnow()
+    payment.canceled_at = datetime.now(timezone.utc)
     payment.canceled_by = current_user.name or current_user.email
     payment.cancel_reason = data.reason
 
@@ -799,7 +799,7 @@ async def upload_receipt_image(
         raise HTTPException(status_code=404, detail="الدفعة غير موجودة")
 
     payment.receipt_image = data.image_base64
-    payment.receipt_captured_at = datetime.utcnow()
+    payment.receipt_captured_at = datetime.now(timezone.utc)
     await db.commit()
 
     logger.info(f"Receipt image saved for payment {payment_id}")
