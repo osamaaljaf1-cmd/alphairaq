@@ -60,6 +60,9 @@ ALLOWED_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("canceled_at", "TIMESTAMP WITH TIME ZONE"),
         ("canceled_by", "VARCHAR"),
         ("cancel_reason", "VARCHAR"),
+        ("handed_over", "BOOLEAN"),
+        ("handed_over_at", "TIMESTAMP WITH TIME ZONE"),
+        ("handed_over_by", "VARCHAR"),
     ],
 }
 
@@ -137,6 +140,20 @@ async def add_missing_columns(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         await db.rollback()
         results.append(f"default status error: {str(e)}")
+
+    # Backfill: payments recorded before the cash-handover feature existed
+    # are treated as already settled (handed_over=TRUE), not as newly-pending
+    # rep collections. Only rows genuinely created after this point via
+    # POST /debts/pay are meant to start out pending (handed_over=FALSE).
+    try:
+        await db.execute(
+            text("UPDATE payments SET handed_over = TRUE WHERE handed_over IS NULL")
+        )
+        await db.commit()
+        results.append("payments.handed_over backfilled to TRUE for pre-existing rows")
+    except Exception as e:
+        await db.rollback()
+        results.append(f"payments.handed_over backfill error: {str(e)}")
 
     # Create messages table if not exists (static DDL, no user input)
     try:

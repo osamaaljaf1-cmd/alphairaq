@@ -1,5 +1,5 @@
 from core.database import Base
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, func
 
 
 class Payments(Base):
@@ -22,3 +22,11 @@ class Payments(Base):
     canceled_at = Column(DateTime(timezone=True), nullable=True)
     canceled_by = Column(String, nullable=True)
     cancel_reason = Column(String, nullable=True)
+    # Cash-handover tracking: a payment recorded by a rep out in the field
+    # starts as handed_over=False ("still with the rep") until accounting
+    # confirms they physically received it (see /payments/confirm-handover).
+    # Payments recorded directly by non-rep roles are marked handed_over=True
+    # immediately since there's no rep holding cash in that case.
+    handed_over = Column(Boolean, nullable=True, default=False)
+    handed_over_at = Column(DateTime(timezone=True), nullable=True)
+    handed_over_by = Column(String, nullable=True)

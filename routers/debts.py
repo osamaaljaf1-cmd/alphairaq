@@ -1,7 +1,7 @@
 import io
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import pandas as pd
@@ -17,7 +17,7 @@ from models.payments import Payments
 from models.payment_details import PaymentDetails
 from schemas.auth import UserResponse
 from services.debts import DebtsService
-from services.permission_check import require_permission
+from services.permission_check import require_permission, resolve_user_role
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +87,29 @@ class PaymentResponse(BaseModel):
     canceled_at: Optional[datetime] = None
     canceled_by: Optional[str] = None
     cancel_reason: Optional[str] = None
+    handed_over: Optional[bool] = None
+    handed_over_at: Optional[datetime] = None
+    handed_over_by: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class ConfirmHandoverRequest(BaseModel):
+    payment_ids: List[int]
+
+
+class HandoverRepSummary(BaseModel):
+    user_id: str
+    rep_name: str
+    pending_total: float
+    payments: List[PaymentResponse]
+
+
+class HandoverSummaryResponse(BaseModel):
+    reps: List[HandoverRepSummary]
+    pending_total: float
+    confirmed_total: float
 
 
 class ReceiptImageUpload(BaseModel):
@@ -544,6 +564,13 @@ async def process_payment(
     if net_received < 0:
         raise HTTPException(status_code=400, detail="المبلغ الصافي لا يمكن أن يكون سالباً")
 
+    # A rep collecting cash out in the field holds it until accounting
+    # confirms receipt (see /payments/confirm-handover); anyone else
+    # recording a payment is assumed to already be at the accounting side.
+    role = await resolve_user_role(db, current_user)
+    is_rep = role == "rep"
+    now = datetime.now(timezone.utc)
+
     # Create payment record
     payment = Payments(
         user_id=str(current_user.id),
@@ -555,6 +582,9 @@ async def process_payment(
         notes=data.notes,
         rep_name=current_user.name or current_user.email,
         status="active",
+        handed_over=not is_rep,
+        handed_over_at=None if is_rep else now,
+        handed_over_by=None if is_rep else str(current_user.id),
     )
     db.add(payment)
     await db.flush()  # Get payment.id
@@ -666,6 +696,85 @@ async def list_payments(
     items = result.scalars().all()
 
     return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+
+# ---------- Cash Handover (rep -> accounting) ----------
+@router.get("/payments/handover-summary", response_model=HandoverSummaryResponse)
+async def get_handover_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Breaks settled payments down into 'still with the rep' (collected but
+    not yet handed to accounting) vs 'confirmed received by accounting',
+    grouped by rep. Cancelled payments are excluded entirely."""
+    from sqlalchemy import select
+
+    result = await db.execute(select(Payments).order_by(Payments.created_at.desc()))
+    all_payments = result.scalars().all()
+
+    pending_total = 0.0
+    confirmed_total = 0.0
+    reps: dict[str, HandoverRepSummary] = {}
+
+    for p in all_payments:
+        if p.status == "canceled":
+            continue
+        if p.handed_over:
+            confirmed_total += p.net_received
+            continue
+        pending_total += p.net_received
+        key = p.user_id
+        if key not in reps:
+            reps[key] = HandoverRepSummary(
+                user_id=p.user_id,
+                rep_name=p.rep_name or "غير معروف",
+                pending_total=0.0,
+                payments=[],
+            )
+        reps[key].pending_total += p.net_received
+        reps[key].payments.append(p)
+
+    return HandoverSummaryResponse(
+        reps=sorted(reps.values(), key=lambda r: -r.pending_total),
+        pending_total=pending_total,
+        confirmed_total=confirmed_total,
+    )
+
+
+@router.post("/payments/confirm-handover")
+async def confirm_handover(
+    request: ConfirmHandoverRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Accounting confirms it physically received cash a rep collected —
+    marks the given payments as handed_over, zeroing them out of that rep's
+    pending total. Supports confirming one payment or many (select-all) in
+    a single call. Requires can_delete on the debts page, same gate as
+    cancel_payment."""
+    await require_permission(db, current_user, "debts", "delete")
+
+    if not request.payment_ids:
+        raise HTTPException(status_code=400, detail="يرجى تحديد دفعة واحدة على الأقل")
+
+    from sqlalchemy import select
+
+    result = await db.execute(select(Payments).where(Payments.id.in_(request.payment_ids)))
+    payments = result.scalars().all()
+
+    now = datetime.now(timezone.utc)
+    confirmed_count = 0
+    for p in payments:
+        if p.status == "canceled" or p.handed_over:
+            continue
+        p.handed_over = True
+        p.handed_over_at = now
+        p.handed_over_by = str(current_user.id)
+        confirmed_count += 1
+
+    await db.commit()
+    logger.info(f"Confirmed handover for {confirmed_count} payments by {current_user.id}")
+    return {"success": True, "confirmed_count": confirmed_count}
 
 
 # ---------- Payment Receipt Photo (archive) ----------
