@@ -1,10 +1,11 @@
 import logging
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.returns import Returns
+from models.return_items import Return_items
 
 logger = logging.getLogger(__name__)
 
@@ -124,15 +125,19 @@ class ReturnsService:
             raise
 
     async def delete(self, obj_id: int, user_id: Optional[str] = None) -> bool:
-        """Delete returns (requires ownership)"""
+        """Delete a return (and its line items, which have no DB-level
+        cascade — return_id is a plain column, not a real FK). Pass
+        user_id to restrict to the caller's own returns; pass None to allow
+        deleting any return (used for privileged roles, see the router)."""
         try:
             obj = await self.get_by_id(obj_id, user_id=user_id)
             if not obj:
                 logger.warning(f"Returns {obj_id} not found for deletion")
                 return False
+            await self.db.execute(sa_delete(Return_items).where(Return_items.return_id == obj_id))
             await self.db.delete(obj)
             await self.db.commit()
-            logger.info(f"Deleted returns {obj_id}")
+            logger.info(f"Deleted returns {obj_id} and its return_items")
             return True
         except Exception as e:
             await self.db.rollback()
