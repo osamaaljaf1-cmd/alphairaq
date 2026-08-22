@@ -346,6 +346,13 @@ async def backfill_area_ids(db: AsyncSession = Depends(get_db)):
     create, as a new top-level area) a matching row in `areas` by
     case/whitespace-insensitive name match, and link it via `area_id`.
     Idempotent — safe to re-run; only touches rows where area_id IS NULL.
+
+    Batched rather than one row at a time: with several thousand customers
+    the original row-by-row version was slow enough to hit the platform's
+    upstream request timeout mid-run, and since it only committed once at
+    the very end of each table's loop, a cut-off request lost all of that
+    table's progress. Now new areas are created in one pass and every row's
+    area_id is written via a single multi-row UPDATE per table.
     """
     results = []
 
@@ -364,33 +371,35 @@ async def backfill_area_ids(db: AsyncSession = Depends(get_db)):
             )
             rows = rows_result.fetchall()
 
-            linked = 0
+            # Pass 1: create any missing areas (one insert per distinct new name)
             created_areas = 0
-            for row_id, area_name in rows:
+            seen_new: set[str] = set()
+            for _, area_name in rows:
                 key = (area_name or "").strip().lower()
-                if not key:
+                if not key or key in name_to_id or key in seen_new:
                     continue
-                area_id = name_to_id.get(key)
-                if area_id is None:
-                    insert_result = await db.execute(
-                        text(
-                            "INSERT INTO areas (name, parent_area_id) VALUES (:name, NULL) RETURNING id"
-                        ),
-                        {"name": area_name.strip()},
-                    )
-                    area_id = insert_result.scalar_one()
-                    name_to_id[key] = area_id
-                    created_areas += 1
+                seen_new.add(key)
+                insert_result = await db.execute(
+                    text("INSERT INTO areas (name, parent_area_id) VALUES (:name, NULL) RETURNING id"),
+                    {"name": area_name.strip()},
+                )
+                name_to_id[key] = insert_result.scalar_one()
+                created_areas += 1
 
+            # Pass 2: one batched UPDATE for every row instead of one round-trip each
+            updates = [
+                {"row_id": row_id, "area_id": name_to_id[(area_name or "").strip().lower()]}
+                for row_id, area_name in rows
+                if (area_name or "").strip()
+            ]
+            if updates:
                 await db.execute(
                     text(f'UPDATE "{table}" SET area_id = :area_id WHERE id = :row_id'),
-                    {"area_id": area_id, "row_id": row_id},
+                    updates,
                 )
-                linked += 1
-
             await db.commit()
             results.append(
-                f"{table}: linked {linked} rows to areas ({created_areas} new areas created)"
+                f"{table}: linked {len(updates)} rows to areas ({created_areas} new areas created)"
             )
     except Exception as e:
         await db.rollback()
