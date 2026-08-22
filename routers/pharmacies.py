@@ -9,9 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.auth import get_current_user
+from schemas.auth import UserResponse
 from models.pharmacies import Pharmacies
 from services.pharmacies import PharmaciesService
 from services.doctors import DoctorsService
+from services.area_scope import get_customer_scope
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -27,6 +30,7 @@ class PharmaciesData(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     area: Optional[str] = None
+    area_id: Optional[int] = None
     contact_person: Optional[str] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
@@ -39,6 +43,7 @@ class PharmaciesUpdateData(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     area: Optional[str] = None
+    area_id: Optional[int] = None
     contact_person: Optional[str] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
@@ -52,6 +57,7 @@ class PharmaciesResponse(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     area: Optional[str] = None
+    area_id: Optional[int] = None
     contact_person: Optional[str] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
@@ -97,11 +103,13 @@ async def query_pharmaciess(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=20000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Query pharmaciess with filtering, sorting, and pagination"""
+    """Query pharmaciess with filtering, sorting, and pagination — scoped to
+    the caller's assigned areas/reps unless they're admin/accounting."""
     logger.debug(f"Querying pharmaciess: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
-    
+
     service = PharmaciesService(db)
     try:
         # Parse query JSON if provided
@@ -111,12 +119,14 @@ async def query_pharmaciess(
                 query_dict = json.loads(query)
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
-        
+
+        scope = await get_customer_scope(db, current_user)
         result = await service.get_list(
-            skip=skip, 
+            skip=skip,
             limit=limit,
             query_dict=query_dict,
             sort=sort,
+            scope=scope,
         )
         logger.debug(f"Found {result['total']} pharmaciess")
         return result
@@ -134,9 +144,14 @@ async def query_pharmaciess_all(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=20000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Query pharmaciess with filtering, sorting, and pagination without user limitation
+    """Same as above but without pagination-owner scoping historically — now
+    ALSO applies the caller's area/rep scope, so a rep or manager can't
+    bypass their restriction just by calling /all instead of the base route.
+    Only admin/accounting (or roles this feature doesn't apply to) actually
+    see everything here."""
     logger.debug(f"Querying pharmaciess: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 
     service = PharmaciesService(db)
@@ -149,11 +164,13 @@ async def query_pharmaciess_all(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
 
+        scope = await get_customer_scope(db, current_user)
         result = await service.get_list(
             skip=skip,
             limit=limit,
             query_dict=query_dict,
-            sort=sort
+            sort=sort,
+            scope=scope,
         )
         logger.debug(f"Found {result['total']} pharmaciess")
         return result

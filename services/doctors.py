@@ -1,10 +1,11 @@
 import logging
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_, false
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.doctors import Doctors
+from services.area_scope import CustomerScope
 
 logger = logging.getLogger(__name__)
 
@@ -41,23 +42,32 @@ class DoctorsService:
             raise
 
     async def get_list(
-        self, 
-        skip: int = 0, 
-        limit: int = 20, 
+        self,
+        skip: int = 0,
+        limit: int = 20,
         query_dict: Optional[Dict[str, Any]] = None,
         sort: Optional[str] = None,
+        scope: Optional[CustomerScope] = None,
     ) -> Dict[str, Any]:
         """Get paginated list of doctorss"""
         try:
             query = select(Doctors)
             count_query = select(func.count(Doctors.id))
-            
+
             if query_dict:
                 for field, value in query_dict.items():
                     if hasattr(Doctors, field):
                         query = query.where(getattr(Doctors, field) == value)
                         count_query = count_query.where(getattr(Doctors, field) == value)
-            
+
+            if scope is not None and not scope.unrestricted:
+                visibility = or_(
+                    Doctors.area_id.in_(scope.area_ids) if scope.area_ids else false(),
+                    Doctors.representative_id.in_(scope.rep_ids) if scope.rep_ids else false(),
+                )
+                query = query.where(visibility)
+                count_query = count_query.where(visibility)
+
             count_result = await self.db.execute(count_query)
             total = count_result.scalar()
 

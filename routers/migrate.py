@@ -13,12 +13,14 @@ ALLOWED_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "doctors": [
         ("customer_number", "VARCHAR"),
         ("area", "VARCHAR"),
+        ("area_id", "INTEGER"),
         ("representative_id", "INTEGER"),
         ("status", "VARCHAR"),
         ("doctor_class", "VARCHAR"),
     ],
     "pharmacies": [
         ("customer_number", "VARCHAR"),
+        ("area_id", "INTEGER"),
         ("representative_id", "INTEGER"),
         ("status", "VARCHAR"),
     ],
@@ -331,5 +333,67 @@ async def grant_visit_permissions(db: AsyncSession = Depends(get_db)):
                 if "duplicate" in str(e).lower():
                     continue
                 results.append(f"{role}/{page}: insert error - {str(e)}")
+
+    return {"success": True, "results": results}
+
+
+@router.post("/backfill-area-ids")
+async def backfill_area_ids(db: AsyncSession = Depends(get_db)):
+    """One-time bridge for the new area-based visibility restriction: pharmacies
+    and doctors only ever had a free-text `area` string, unrelated to the
+    `areas` table used by the rep-area assignment feature. For every
+    pharmacy/doctor with a non-empty `area` and no `area_id` yet, find (or
+    create, as a new top-level area) a matching row in `areas` by
+    case/whitespace-insensitive name match, and link it via `area_id`.
+    Idempotent — safe to re-run; only touches rows where area_id IS NULL.
+    """
+    results = []
+
+    try:
+        existing_areas_result = await db.execute(text("SELECT id, name FROM areas"))
+        name_to_id = {
+            (row[1] or "").strip().lower(): row[0] for row in existing_areas_result.fetchall()
+        }
+
+        for table in ("pharmacies", "doctors"):
+            rows_result = await db.execute(
+                text(
+                    f'SELECT id, area FROM "{table}" '
+                    f"WHERE area_id IS NULL AND area IS NOT NULL AND trim(area) != ''"
+                )
+            )
+            rows = rows_result.fetchall()
+
+            linked = 0
+            created_areas = 0
+            for row_id, area_name in rows:
+                key = (area_name or "").strip().lower()
+                if not key:
+                    continue
+                area_id = name_to_id.get(key)
+                if area_id is None:
+                    insert_result = await db.execute(
+                        text(
+                            "INSERT INTO areas (name, parent_area_id) VALUES (:name, NULL) RETURNING id"
+                        ),
+                        {"name": area_name.strip()},
+                    )
+                    area_id = insert_result.scalar_one()
+                    name_to_id[key] = area_id
+                    created_areas += 1
+
+                await db.execute(
+                    text(f'UPDATE "{table}" SET area_id = :area_id WHERE id = :row_id'),
+                    {"area_id": area_id, "row_id": row_id},
+                )
+                linked += 1
+
+            await db.commit()
+            results.append(
+                f"{table}: linked {linked} rows to areas ({created_areas} new areas created)"
+            )
+    except Exception as e:
+        await db.rollback()
+        results.append(f"backfill error: {str(e)}")
 
     return {"success": True, "results": results}

@@ -13,6 +13,7 @@ class Doctors(Base):
     phone = Column(String, nullable=True)
     hospital = Column(String, nullable=True)
     area = Column(String, nullable=True)
+    area_id = Column(Integer, nullable=True)
     representative_id = Column(Integer, nullable=True)
     status = Column(String, nullable=True)
     notes = Column(String, nullable=True)

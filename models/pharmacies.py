@@ -12,6 +12,7 @@ class Pharmacies(Base):
     address = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     area = Column(String, nullable=True)
+    area_id = Column(Integer, nullable=True)
     contact_person = Column(String, nullable=True)
     representative_id = Column(Integer, nullable=True)
     status = Column(String, nullable=True)

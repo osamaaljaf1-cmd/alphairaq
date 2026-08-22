@@ -9,8 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.auth import get_current_user
+from schemas.auth import UserResponse
 from models.doctors import Doctors
 from services.doctors import DoctorsService
+from services.area_scope import get_customer_scope
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -27,6 +30,7 @@ class DoctorsData(BaseModel):
     phone: str = None
     hospital: str = None
     area: str = None
+    area_id: Optional[int] = None
     representative_id: int = None
     status: str = None
     notes: str = None
@@ -40,6 +44,7 @@ class DoctorsUpdateData(BaseModel):
     phone: Optional[str] = None
     hospital: Optional[str] = None
     area: Optional[str] = None
+    area_id: Optional[int] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
     notes: Optional[str] = None
@@ -54,6 +59,7 @@ class DoctorsResponse(BaseModel):
     phone: Optional[str] = None
     hospital: Optional[str] = None
     area: Optional[str] = None
+    area_id: Optional[int] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
     notes: Optional[str] = None
@@ -99,11 +105,13 @@ async def query_doctorss(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=20000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Query doctorss with filtering, sorting, and pagination"""
+    """Query doctorss with filtering, sorting, and pagination — scoped to the
+    caller's assigned areas/reps unless they're admin/accounting."""
     logger.debug(f"Querying doctorss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
-    
+
     service = DoctorsService(db)
     try:
         # Parse query JSON if provided
@@ -113,12 +121,14 @@ async def query_doctorss(
                 query_dict = json.loads(query)
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
-        
+
+        scope = await get_customer_scope(db, current_user)
         result = await service.get_list(
-            skip=skip, 
+            skip=skip,
             limit=limit,
             query_dict=query_dict,
             sort=sort,
+            scope=scope,
         )
         logger.debug(f"Found {result['total']} doctorss")
         return result
@@ -136,9 +146,11 @@ async def query_doctorss_all(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=20000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # Query doctorss with filtering, sorting, and pagination without user limitation
+    """Same as above — now ALSO applies the caller's area/rep scope, so a rep
+    or manager can't bypass their restriction just by calling /all."""
     logger.debug(f"Querying doctorss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 
     service = DoctorsService(db)
@@ -151,11 +163,13 @@ async def query_doctorss_all(
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
 
+        scope = await get_customer_scope(db, current_user)
         result = await service.get_list(
             skip=skip,
             limit=limit,
             query_dict=query_dict,
-            sort=sort
+            sort=sort,
+            scope=scope,
         )
         logger.debug(f"Found {result['total']} doctorss")
         return result
