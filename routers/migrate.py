@@ -423,3 +423,41 @@ async def backfill_area_ids(db: AsyncSession = Depends(get_db)):
         results.append(f"backfill error: {str(e)}")
 
     return {"success": True, "results": results}
+
+
+# Hardcoded ids of known test/seed payment rows, identified by inspection:
+# customer_name literally "TEST - احذف بعد الاختبار", a note reading
+# "اختبار تلقائي من Claude - سيتم إلغاؤه فوراً" that was never actually
+# canceled, and a batch of round-number seed payments (id 1-3) sharing the
+# same admin user_id, null rep_name, and zero applied invoices. These are
+# exactly what was inflating the cash-handover "confirmed" total with
+# non-existent money. One-time cleanup, not a general-purpose endpoint.
+# User-confirmed before running.
+TEST_PAYMENT_IDS = [1, 2, 3, 4, 5, 6, 7]
+
+
+@router.post("/cleanup-test-payments")
+async def cleanup_test_payments(db: AsyncSession = Depends(get_db)):
+    """Cancel the known test/seed payment rows so they stop counting toward
+    the cash-handover confirmed_total. Idempotent: already-canceled rows are
+    skipped. None of these rows have any applied_invoices, so canceling them
+    cannot affect any real debt balance."""
+    results = []
+    try:
+        result = await db.execute(
+            text(
+                "UPDATE payments SET status = 'canceled', canceled_at = NOW(), "
+                "canceled_by = 'cleanup', cancel_reason = 'بيانات تجريبية' "
+                "WHERE id = ANY(:ids) AND (status IS NULL OR status != 'canceled') "
+                "RETURNING id"
+            ),
+            {"ids": TEST_PAYMENT_IDS},
+        )
+        canceled_ids = [row[0] for row in result.fetchall()]
+        await db.commit()
+        results.append(f"canceled test payments: {canceled_ids}")
+    except Exception as e:
+        await db.rollback()
+        results.append(f"cleanup error: {str(e)}")
+
+    return {"success": True, "results": results}
