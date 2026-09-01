@@ -10,6 +10,7 @@ from core.database import get_db
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.rep_targets import RepTargets
+from services.permission_check import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,11 @@ async def set_rep_targets(
     current_user: UserResponse = Depends(get_current_user),
 ):
     """Replace the target for one rep/month: deletes whatever was saved for
-    that rep+year+month and inserts the new overall amount + product rows."""
+    that rep+year+month and inserts the new overall amount + product rows.
+    Requires can_edit permission on the target page — this endpoint
+    previously had no permission check at all."""
+    await require_permission(db, current_user, "target", "edit")
+
     await db.execute(
         delete(RepTargets).where(
             RepTargets.representative_id == data.representative_id,
@@ -133,7 +138,11 @@ async def bulk_set_rep_targets(
     (e.g. an Excel import with rep name + product name + quantity columns
     covering several representatives). Unlike PUT /rep-targets, this only
     touches the (rep, product) rows given here and leaves every other
-    product target already saved for those reps/month untouched."""
+    product target already saved for those reps/month untouched. Requires
+    can_import permission on the target page, matching the frontend's
+    canImport('target') gate on the Excel-import trigger."""
+    await require_permission(db, current_user, "target", "import")
+
     inserted = 0
     updated = 0
     for item in data.items:
