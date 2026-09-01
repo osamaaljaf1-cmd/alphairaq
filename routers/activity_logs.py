@@ -12,6 +12,7 @@ from core.database import get_db
 from services.activity_logs import Activity_logsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -150,7 +151,9 @@ async def log_doctor_visit(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Log a doctor visit as an activity log entry"""
+    """Log a doctor visit as an activity log entry (requires can_add on the
+    doctor_visits page — this endpoint previously had no permission check)"""
+    await require_permission(db, current_user, "doctor_visits", "add")
     logger.debug(f"Logging doctor visit: doctor_id={data.doctor_id}, user={current_user.id}")
 
     service = Activity_logsService(db)
@@ -191,7 +194,10 @@ async def log_pharmacy_visit(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Log a pharmacy visit as an activity log entry"""
+    """Log a pharmacy visit as an activity log entry (requires can_add on
+    the pharmacy_visits page — this endpoint previously had no permission
+    check)"""
+    await require_permission(db, current_user, "pharmacy_visits", "add")
     logger.debug(f"Logging pharmacy visit: pharmacy_id={data.pharmacy_id}, user={current_user.id}")
 
     service = Activity_logsService(db)

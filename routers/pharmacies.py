@@ -248,9 +248,12 @@ async def get_pharmacies(
 @router.post("", response_model=PharmaciesResponse, status_code=201)
 async def create_pharmacies(
     data: PharmaciesData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new pharmacies"""
+    """Create a new pharmacies (requires can_add on the customers page —
+    this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "add")
     logger.debug(f"Creating new pharmacies with data: {data}")
 
     service = PharmaciesService(db)
@@ -282,15 +285,19 @@ async def create_pharmacies(
 @router.post("/batch", response_model=List[PharmaciesResponse], status_code=201)
 async def create_pharmaciess_batch(
     request: PharmaciesBatchCreateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple pharmaciess in a single request.
+    """Create multiple pharmaciess in a single request — this is the Excel
+    bulk-import path, so it requires can_import on the customers page (this
+    endpoint previously had no auth at all).
 
     Skips rows whose name already exists (case/whitespace-insensitive), both
     against existing records and duplicates within the same upload, and
     performs a single bulk insert instead of one commit per row so large
     imports don't hit the client's request timeout.
     """
+    await require_permission(db, current_user, "customers", "import")
     logger.debug(f"Batch creating {len(request.items)} pharmaciess")
 
     try:
@@ -326,11 +333,14 @@ async def create_pharmaciess_batch(
 @router.put("/batch", response_model=List[PharmaciesResponse])
 async def update_pharmaciess_batch(
     request: PharmaciesBatchUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update multiple pharmaciess in a single request"""
+    """Update multiple pharmaciess in a single request (requires can_edit on
+    the customers page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "edit")
     logger.debug(f"Batch updating {len(request.items)} pharmaciess")
-    
+
     service = PharmaciesService(db)
     results = []
     
@@ -354,9 +364,12 @@ async def update_pharmaciess_batch(
 async def update_pharmacies(
     id: int,
     data: PharmaciesUpdateData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing pharmacies"""
+    """Update an existing pharmacies (requires can_edit on the customers
+    page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "edit")
     logger.debug(f"Updating pharmacies {id} with data: {data}")
 
     service = PharmaciesService(db)

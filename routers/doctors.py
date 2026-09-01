@@ -208,9 +208,12 @@ async def get_doctors(
 @router.post("", response_model=DoctorsResponse, status_code=201)
 async def create_doctors(
     data: DoctorsData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new doctors"""
+    """Create a new doctors (requires can_add on the customers page — this
+    endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "add")
     logger.debug(f"Creating new doctors with data: {data}")
 
     service = DoctorsService(db)
@@ -242,15 +245,19 @@ async def create_doctors(
 @router.post("/batch", response_model=List[DoctorsResponse], status_code=201)
 async def create_doctorss_batch(
     request: DoctorsBatchCreateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple doctorss in a single request.
+    """Create multiple doctorss in a single request — this is the Excel
+    bulk-import path, so it requires can_import on the customers page (this
+    endpoint previously had no auth at all).
 
     Skips rows whose name already exists (case/whitespace-insensitive), both
     against existing records and duplicates within the same upload, and
     performs a single bulk insert instead of one commit per row so large
     imports don't hit the client's request timeout.
     """
+    await require_permission(db, current_user, "customers", "import")
     logger.debug(f"Batch creating {len(request.items)} doctorss")
 
     try:
@@ -286,11 +293,14 @@ async def create_doctorss_batch(
 @router.put("/batch", response_model=List[DoctorsResponse])
 async def update_doctorss_batch(
     request: DoctorsBatchUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update multiple doctorss in a single request"""
+    """Update multiple doctorss in a single request (requires can_edit on
+    the customers page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "edit")
     logger.debug(f"Batch updating {len(request.items)} doctorss")
-    
+
     service = DoctorsService(db)
     results = []
     
@@ -314,9 +324,12 @@ async def update_doctorss_batch(
 async def update_doctors(
     id: int,
     data: DoctorsUpdateData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing doctors"""
+    """Update an existing doctors (requires can_edit on the customers page —
+    this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "customers", "edit")
     logger.debug(f"Updating doctors {id} with data: {data}")
 
     service = DoctorsService(db)

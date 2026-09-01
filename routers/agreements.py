@@ -316,11 +316,14 @@ async def get_agreements(
 @router.post("", response_model=AgreementsResponse, status_code=201)
 async def create_agreements(
     data: AgreementsData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new agreements"""
+    """Create a new agreements (requires can_add permission on the
+    agreements page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "agreements", "add")
     logger.debug(f"Creating new agreements with data: {data}")
-    
+
     service = AgreementsService(db)
     try:
         result = await service.create(data.model_dump())
@@ -340,11 +343,14 @@ async def create_agreements(
 @router.post("/batch", response_model=List[AgreementsResponse], status_code=201)
 async def create_agreementss_batch(
     request: AgreementsBatchCreateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple agreementss in a single request"""
+    """Create multiple agreementss in a single request (requires can_add on
+    the agreements page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "agreements", "add")
     logger.debug(f"Batch creating {len(request.items)} agreementss")
-    
+
     service = AgreementsService(db)
     results = []
     
@@ -365,11 +371,14 @@ async def create_agreementss_batch(
 @router.put("/batch", response_model=List[AgreementsResponse])
 async def update_agreementss_batch(
     request: AgreementsBatchUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update multiple agreementss in a single request"""
+    """Update multiple agreementss in a single request (requires can_edit on
+    the agreements page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "agreements", "edit")
     logger.debug(f"Batch updating {len(request.items)} agreementss")
-    
+
     service = AgreementsService(db)
     results = []
     
@@ -393,9 +402,12 @@ async def update_agreementss_batch(
 async def update_agreements(
     id: int,
     data: AgreementsUpdateData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing agreements"""
+    """Update an existing agreements (requires can_edit on the agreements
+    page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "agreements", "edit")
     logger.debug(f"Updating agreements {id} with data: {data}")
 
     service = AgreementsService(db)

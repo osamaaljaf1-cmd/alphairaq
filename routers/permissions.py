@@ -8,7 +8,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from dependencies.auth import get_current_user
+from schemas.auth import UserResponse
 from services.permissions import PermissionsService
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -188,11 +191,15 @@ async def get_permissions(
 @router.post("", response_model=PermissionsResponse, status_code=201)
 async def create_permissions(
     data: PermissionsData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new permissions"""
+    """Create a new permissions. Requires can_add on the permissions page —
+    this endpoint previously had no auth at all, letting anyone grant any
+    role any permission by calling it directly."""
+    await require_permission(db, current_user, "permissions", "add")
     logger.debug(f"Creating new permissions with data: {data}")
-    
+
     service = PermissionsService(db)
     try:
         result = await service.create(data.model_dump())
@@ -212,11 +219,14 @@ async def create_permissions(
 @router.post("/batch", response_model=List[PermissionsResponse], status_code=201)
 async def create_permissionss_batch(
     request: PermissionsBatchCreateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple permissionss in a single request"""
+    """Create multiple permissionss in a single request (requires can_add on
+    the permissions page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "permissions", "add")
     logger.debug(f"Batch creating {len(request.items)} permissionss")
-    
+
     service = PermissionsService(db)
     results = []
     
@@ -237,11 +247,14 @@ async def create_permissionss_batch(
 @router.put("/batch", response_model=List[PermissionsResponse])
 async def update_permissionss_batch(
     request: PermissionsBatchUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update multiple permissionss in a single request"""
+    """Update multiple permissionss in a single request (requires can_edit on
+    the permissions page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "permissions", "edit")
     logger.debug(f"Batch updating {len(request.items)} permissionss")
-    
+
     service = PermissionsService(db)
     results = []
     
@@ -265,9 +278,13 @@ async def update_permissionss_batch(
 async def update_permissions(
     id: int,
     data: PermissionsUpdateData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing permissions"""
+    """Update an existing permissions. Requires can_edit on the permissions
+    page — this endpoint previously had no auth at all, letting anyone grant
+    any role any permission by calling it directly."""
+    await require_permission(db, current_user, "permissions", "edit")
     logger.debug(f"Updating permissions {id} with data: {data}")
 
     service = PermissionsService(db)
@@ -294,11 +311,14 @@ async def update_permissions(
 @router.delete("/batch")
 async def delete_permissionss_batch(
     request: PermissionsBatchDeleteRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple permissionss by their IDs"""
+    """Delete multiple permissionss by their IDs (requires can_delete on the
+    permissions page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "permissions", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} permissionss")
-    
+
     service = PermissionsService(db)
     deleted_count = 0
     
@@ -319,9 +339,12 @@ async def delete_permissionss_batch(
 @router.delete("/{id}")
 async def delete_permissions(
     id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single permissions by ID"""
+    """Delete a single permissions by ID. Requires can_delete on the
+    permissions page — this endpoint previously had no auth at all."""
+    await require_permission(db, current_user, "permissions", "delete")
     logger.debug(f"Deleting permissions with id: {id}")
     
     service = PermissionsService(db)

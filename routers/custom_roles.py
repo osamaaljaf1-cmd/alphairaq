@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from services.permission_check import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,10 @@ async def create_custom_role(
 ):
     """Create a new internal role and immediately seed blank (all-False)
     permission rows for it across every page, so it's ready to configure
-    from the Permissions page right away."""
+    from the Permissions page right away. Requires can_add on the
+    permissions page — role management is a permissions-page action."""
+    await require_permission(db, current_user, "permissions", "add")
+
     name = data.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="اسم الدور مطلوب")

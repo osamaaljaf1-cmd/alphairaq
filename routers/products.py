@@ -188,11 +188,14 @@ async def get_products(
 @router.post("", response_model=ProductsResponse, status_code=201)
 async def create_products(
     data: ProductsData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new products"""
+    """Create a new products (requires can_add on the items page — this
+    endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "items", "add")
     logger.debug(f"Creating new products with data: {data}")
-    
+
     service = ProductsService(db)
     try:
         result = await service.create(data.model_dump())
@@ -212,11 +215,14 @@ async def create_products(
 @router.post("/batch", response_model=List[ProductsResponse], status_code=201)
 async def create_productss_batch(
     request: ProductsBatchCreateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple productss in a single request"""
+    """Create multiple productss in a single request (requires can_add on
+    the items page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "items", "add")
     logger.debug(f"Batch creating {len(request.items)} productss")
-    
+
     service = ProductsService(db)
     results = []
     
@@ -237,11 +243,14 @@ async def create_productss_batch(
 @router.put("/batch", response_model=List[ProductsResponse])
 async def update_productss_batch(
     request: ProductsBatchUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update multiple productss in a single request"""
+    """Update multiple productss in a single request (requires can_edit on
+    the items page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "items", "edit")
     logger.debug(f"Batch updating {len(request.items)} productss")
-    
+
     service = ProductsService(db)
     results = []
     
@@ -265,9 +274,12 @@ async def update_productss_batch(
 async def update_products(
     id: int,
     data: ProductsUpdateData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing products"""
+    """Update an existing products (requires can_edit on the items page —
+    this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "items", "edit")
     logger.debug(f"Updating products {id} with data: {data}")
 
     service = ProductsService(db)

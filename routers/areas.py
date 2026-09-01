@@ -173,11 +173,16 @@ async def get_areas(
 @router.post("", response_model=AreasResponse, status_code=201)
 async def create_areas(
     data: AreasData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new areas"""
+    """Create a new areas (requires can_add on the areas page — this
+    endpoint previously had no auth at all). Also reached from Customers.tsx
+    when adding a pharmacy/doctor with a not-yet-known area name; every role
+    with can_add on customers already has can_add on areas too."""
+    await require_permission(db, current_user, "areas", "add")
     logger.debug(f"Creating new areas with data: {data}")
-    
+
     service = AreasService(db)
     try:
         result = await service.create(data.model_dump())
@@ -197,11 +202,14 @@ async def create_areas(
 @router.post("/batch", response_model=List[AreasResponse], status_code=201)
 async def create_areass_batch(
     request: AreasBatchCreateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple areass in a single request"""
+    """Create multiple areass in a single request (requires can_add on the
+    areas page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "areas", "add")
     logger.debug(f"Batch creating {len(request.items)} areass")
-    
+
     service = AreasService(db)
     results = []
     
@@ -222,11 +230,14 @@ async def create_areass_batch(
 @router.put("/batch", response_model=List[AreasResponse])
 async def update_areass_batch(
     request: AreasBatchUpdateRequest,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update multiple areass in a single request"""
+    """Update multiple areass in a single request (requires can_edit on the
+    areas page — this endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "areas", "edit")
     logger.debug(f"Batch updating {len(request.items)} areass")
-    
+
     service = AreasService(db)
     results = []
     
@@ -250,9 +261,12 @@ async def update_areass_batch(
 async def update_areas(
     id: int,
     data: AreasUpdateData,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing areas"""
+    """Update an existing areas (requires can_edit on the areas page — this
+    endpoint previously had no auth at all)"""
+    await require_permission(db, current_user, "areas", "edit")
     logger.debug(f"Updating areas {id} with data: {data}")
 
     service = AreasService(db)
