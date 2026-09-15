@@ -1,13 +1,14 @@
 import logging
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.representatives import Representatives
 from models.representative_areas import Representative_areas
 from models.user_assignments import User_assignments
 from models.areas import Areas
+from models.pharmacies import Pharmacies
 from schemas.auth import UserResponse
 
 logger = logging.getLogger(__name__)
@@ -107,3 +108,26 @@ async def get_customer_scope(db: AsyncSession, current_user: UserResponse) -> Cu
 
     area_ids = await _areas_for_reps(db, assigned_rep_ids)
     return CustomerScope(unrestricted=False, area_ids=area_ids, rep_ids=assigned_rep_ids)
+
+
+async def get_scoped_pharmacy_names(db: AsyncSession, scope: "CustomerScope") -> Optional[set[str]]:
+    """Resolve the pharmacy names (trimmed + lowercased) visible under this
+    scope, for matching against free-text fields that store a customer name
+    instead of a real pharmacy_id (e.g. Debts.customer_name). Returns None
+    when the scope is unrestricted (no filtering needed) — a distinct value
+    from an empty set, which means "restricted, but zero pharmacies in
+    scope" (show nothing)."""
+    if scope.unrestricted:
+        return None
+    if not scope.area_ids and not scope.rep_ids:
+        return set()
+
+    result = await db.execute(
+        select(Pharmacies.name).where(
+            or_(
+                Pharmacies.area_id.in_(scope.area_ids) if scope.area_ids else false(),
+                Pharmacies.representative_id.in_(scope.rep_ids) if scope.rep_ids else false(),
+            )
+        )
+    )
+    return {(row[0] or "").strip().lower() for row in result.all() if row[0]}

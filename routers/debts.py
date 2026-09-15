@@ -18,6 +18,7 @@ from models.payment_details import PaymentDetails
 from schemas.auth import UserResponse
 from services.debts import DebtsService
 from services.permission_check import require_permission, resolve_user_role
+from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
 
 logger = logging.getLogger(__name__)
 
@@ -249,13 +250,18 @@ async def get_all_customer_summaries(
 @router.get("", response_model=DebtListResponse)
 async def list_debts(
     query: str = Query(None),
+    customer_search: str = Query(None, description="Partial, case-insensitive search on customer name"),
     sort: str = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """List all debts with filtering and pagination"""
+    """List all debts with filtering and pagination.
+
+    Restricted to the caller's own scoped customers when they're a rep or
+    manager (matches the same area/rep scoping used for the customers
+    list) — admin/accounting and other roles see everything, unrestricted."""
     import json as json_mod
 
     service = DebtsService(db)
@@ -266,18 +272,32 @@ async def list_debts(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid query JSON")
 
-    result = await service.get_list(skip=skip, limit=limit, query_dict=query_dict, sort=sort)
+    scope = await get_customer_scope(db, current_user)
+    scoped_names = await get_scoped_pharmacy_names(db, scope)
+
+    result = await service.get_list(
+        skip=skip,
+        limit=limit,
+        query_dict=query_dict,
+        sort=sort,
+        customer_search=customer_search,
+        scoped_names=scoped_names,
+    )
     return result
 
 
 @router.get("/customers", response_model=List[str])
 async def get_customer_names(
+    customer_search: str = Query(None, description="Partial, case-insensitive search on customer name"),
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Get distinct customer names with debts"""
+    """Get distinct customer names with debts, scoped the same way as the
+    debts list itself (see list_debts)."""
     service = DebtsService(db)
-    return await service.get_customer_names()
+    scope = await get_customer_scope(db, current_user)
+    scoped_names = await get_scoped_pharmacy_names(db, scope)
+    return await service.get_customer_names(customer_search=customer_search, scoped_names=scoped_names)
 
 
 @router.get("/unpaid/{customer_name}", response_model=List[DebtResponse])

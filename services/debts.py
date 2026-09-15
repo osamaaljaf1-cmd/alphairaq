@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, false
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.debts import Debts
@@ -68,7 +68,17 @@ class DebtsService:
         limit: int = 50,
         query_dict: Optional[Dict[str, Any]] = None,
         sort: Optional[str] = None,
+        customer_search: Optional[str] = None,
+        scoped_names: Optional[set[str]] = None,
     ) -> Dict[str, Any]:
+        """
+        customer_search: partial, case-insensitive match on customer_name
+            (the free-text "type to search" filter on the Debts page).
+        scoped_names: pharmacy names (trimmed+lowercased) the caller is
+            restricted to (see services/area_scope.get_scoped_pharmacy_names).
+            None = unrestricted; an empty set = restricted with nothing in
+            scope (show nothing), matching the CustomerScope convention.
+        """
         try:
             query = select(Debts)
             count_query = select(func.count(Debts.id))
@@ -78,6 +88,20 @@ class DebtsService:
                     if hasattr(Debts, field):
                         query = query.where(getattr(Debts, field) == value)
                         count_query = count_query.where(getattr(Debts, field) == value)
+
+            if customer_search:
+                pattern = f"%{customer_search.strip()}%"
+                query = query.where(Debts.customer_name.ilike(pattern))
+                count_query = count_query.where(Debts.customer_name.ilike(pattern))
+
+            if scoped_names is not None:
+                if not scoped_names:
+                    query = query.where(false())
+                    count_query = count_query.where(false())
+                else:
+                    name_filter = func.lower(func.trim(Debts.customer_name)).in_(scoped_names)
+                    query = query.where(name_filter)
+                    count_query = count_query.where(name_filter)
 
             count_result = await self.db.execute(count_query)
             total = count_result.scalar()
@@ -101,12 +125,28 @@ class DebtsService:
             logger.error(f"Error fetching debts list: {str(e)}")
             raise
 
-    async def get_customer_names(self) -> List[str]:
-        """Get distinct customer names that have debts"""
+    async def get_customer_names(
+        self,
+        customer_search: Optional[str] = None,
+        scoped_names: Optional[set[str]] = None,
+    ) -> List[str]:
+        """Get distinct customer names that have debts, optionally filtered
+        by a partial search and/or restricted to a scoped set of pharmacy
+        names (see get_list for the meaning of both params)."""
         try:
-            result = await self.db.execute(
-                select(Debts.customer_name).distinct().order_by(Debts.customer_name)
-            )
+            query = select(Debts.customer_name).distinct()
+
+            if customer_search:
+                query = query.where(Debts.customer_name.ilike(f"%{customer_search.strip()}%"))
+
+            if scoped_names is not None:
+                if not scoped_names:
+                    query = query.where(false())
+                else:
+                    query = query.where(func.lower(func.trim(Debts.customer_name)).in_(scoped_names))
+
+            query = query.order_by(Debts.customer_name)
+            result = await self.db.execute(query)
             return [row[0] for row in result.fetchall()]
         except Exception as e:
             logger.error(f"Error fetching customer names: {str(e)}")
