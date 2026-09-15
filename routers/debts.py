@@ -427,6 +427,24 @@ async def delete_debt(
     return {"message": "تم حذف الدين بنجاح"}
 
 
+@router.delete("")
+async def delete_all_debts(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Delete every debt record. Admin-only, one-off cleanup operation."""
+    await require_permission(db, current_user, "debts", "delete")
+    role = await resolve_user_role(db, current_user)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="هذا الإجراء مقصور على المسؤول")
+
+    from sqlalchemy import delete as sql_delete
+
+    result = await db.execute(sql_delete(Debts))
+    await db.commit()
+    return {"message": f"تم حذف جميع الديون بنجاح ({result.rowcount} سجل)"}
+
+
 # ---------- Excel Import ----------
 @router.post("/import-excel", response_model=ImportResult)
 async def import_excel(
