@@ -23,6 +23,7 @@ ALLOWED_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
         ("area_id", "INTEGER"),
         ("representative_id", "INTEGER"),
         ("status", "VARCHAR"),
+        ("credit_limit", "FLOAT"),
     ],
     "agreements": [
         ("bonus_qty_threshold", "INTEGER"),
@@ -140,6 +141,19 @@ async def add_missing_columns(db: AsyncSession = Depends(get_db)):
     except Exception as e:
         await db.rollback()
         results.append(f"default status error: {str(e)}")
+
+    # Backfill: existing pharmacies created before the credit-limit feature
+    # existed get the same 1,000,000 default new ones get.
+    try:
+        await db.execute(
+            text("UPDATE pharmacies SET credit_limit = :limit WHERE credit_limit IS NULL"),
+            {"limit": 1_000_000},
+        )
+        await db.commit()
+        results.append("pharmacies.credit_limit backfilled to 1,000,000 for existing records")
+    except Exception as e:
+        await db.rollback()
+        results.append(f"credit_limit backfill error: {str(e)}")
 
     # Backfill: payments recorded before the cash-handover feature existed
     # are treated as already settled (handed_over=TRUE), not as newly-pending

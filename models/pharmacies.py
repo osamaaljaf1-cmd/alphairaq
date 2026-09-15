@@ -1,5 +1,5 @@
 from core.database import Base
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Float, Integer, String
 
 
 class Pharmacies(Base):
@@ -16,3 +16,4 @@ class Pharmacies(Base):
     contact_person = Column(String, nullable=True)
     representative_id = Column(Integer, nullable=True)
     status = Column(String, nullable=True)
+    credit_limit = Column(Float, nullable=True)

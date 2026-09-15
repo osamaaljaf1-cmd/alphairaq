@@ -35,6 +35,7 @@ class PharmaciesData(BaseModel):
     contact_person: Optional[str] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
+    credit_limit: Optional[float] = None
 
 
 class PharmaciesUpdateData(BaseModel):
@@ -48,6 +49,7 @@ class PharmaciesUpdateData(BaseModel):
     contact_person: Optional[str] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
+    credit_limit: Optional[float] = None
 
 
 class PharmaciesResponse(BaseModel):
@@ -62,6 +64,7 @@ class PharmaciesResponse(BaseModel):
     contact_person: Optional[str] = None
     representative_id: Optional[int] = None
     status: Optional[str] = None
+    credit_limit: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -266,7 +269,11 @@ async def create_pharmacies(
             if dup_check.scalar_one_or_none():
                 raise HTTPException(status_code=400, detail="يوجد زبون بنفس الاسم مسبقاً")
 
-        result = await service.create(data.model_dump())
+        create_data = data.model_dump()
+        if create_data.get("credit_limit") is None:
+            create_data["credit_limit"] = 1_000_000
+
+        result = await service.create(create_data)
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create pharmacies")
         
@@ -314,6 +321,8 @@ async def create_pharmaciess_batch(
             if not normalized or normalized in existing_names or normalized in seen_in_batch:
                 skipped += 1
                 continue
+            if data.get("credit_limit") is None:
+                data["credit_limit"] = 1_000_000
             seen_in_batch.add(normalized)
             new_objs.append(Pharmacies(**data))
 
