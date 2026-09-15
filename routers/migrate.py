@@ -218,6 +218,24 @@ async def add_missing_columns(db: AsyncSession = Depends(get_db)):
         await db.rollback()
         results.append(f"rep_targets table: error - {str(e)}")
 
+    # Create debt_return_applications table if not exists (static DDL, no user input)
+    try:
+        await db.execute(text("""
+            CREATE TABLE IF NOT EXISTS debt_return_applications (
+                id SERIAL PRIMARY KEY,
+                user_id VARCHAR NOT NULL,
+                return_id INTEGER NOT NULL,
+                debt_id INTEGER NOT NULL,
+                amount_applied FLOAT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """))
+        await db.commit()
+        results.append("debt_return_applications table: created or already exists")
+    except Exception as e:
+        await db.rollback()
+        results.append(f"debt_return_applications table: error - {str(e)}")
+
     return {"results": results}
 
 

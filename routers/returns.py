@@ -14,6 +14,8 @@ from services.returns import ReturnsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.representatives import Representatives
+from models.debts import Debts
+from models.debt_return_applications import Debt_return_applications
 from services.permission_check import require_permission
 
 # Set up logging
@@ -388,6 +390,101 @@ async def delete_returns(
     except Exception as e:
         logger.error(f"Error deleting returns {id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+# ---------- Apply return to customer debts ----------
+class ApplyToDebtItem(BaseModel):
+    debt_id: int
+    amount_applied: float
+
+
+class ApplyToDebtsRequest(BaseModel):
+    applications: List[ApplyToDebtItem]
+
+
+class ApplyToDebtsResponse(BaseModel):
+    applied_count: int
+    total_applied: float
+
+
+@router.post("/{id}/apply-to-debts", response_model=ApplyToDebtsResponse)
+async def apply_return_to_debts(
+    id: int,
+    request: ApplyToDebtsRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply a return's value against one or more of the same customer's
+    outstanding debt invoices, reducing each debt's remaining_amount —
+    mirrors how a cash payment applies against debts (routers/debts.py
+    process_payment's debt_objects loop), except the credit comes from
+    returned goods rather than cash, so there's no net_received/payment
+    record involved. Requires can_add on the returns page — applying a
+    return to debt is part of creating the return, not a separate
+    debts-management action."""
+    await require_permission(db, current_user, "returns", "add")
+
+    if not request.applications:
+        raise HTTPException(status_code=400, detail="يرجى تحديد قائمة دين واحدة على الأقل")
+
+    ret_result = await db.execute(text("SELECT id, pharmacy_id FROM returns WHERE id = :id"), {"id": id})
+    ret = ret_result.fetchone()
+    if not ret:
+        raise HTTPException(status_code=404, detail="المرتجع غير موجود")
+
+    customer_name = None
+    if ret.pharmacy_id:
+        pharm_result = await db.execute(
+            text("SELECT name FROM pharmacies WHERE id = :id"), {"id": ret.pharmacy_id}
+        )
+        pharm_row = pharm_result.fetchone()
+        if pharm_row:
+            customer_name = (pharm_row.name or "").strip().lower()
+
+    applied_count = 0
+    total_applied = 0.0
+    try:
+        for app in request.applications:
+            if app.amount_applied <= 0:
+                continue
+            debt_result = await db.execute(select(Debts).where(Debts.id == app.debt_id))
+            debt = debt_result.scalar_one_or_none()
+            if not debt:
+                raise HTTPException(status_code=404, detail=f"الدين رقم {app.debt_id} غير موجود")
+            if customer_name and (debt.customer_name or "").strip().lower() != customer_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"القائمة {debt.invoice_number} لا تخص نفس زبون المرتجع",
+                )
+
+            applied = min(app.amount_applied, debt.remaining_amount)
+            new_remaining = round(debt.remaining_amount - applied, 2)
+            debt.remaining_amount = max(new_remaining, 0)
+            if debt.remaining_amount <= 0.01:
+                debt.status = "paid"
+            elif debt.remaining_amount < debt.amount - 0.01:
+                debt.status = "partial"
+
+            db.add(Debt_return_applications(
+                user_id=str(current_user.id),
+                return_id=id,
+                debt_id=app.debt_id,
+                amount_applied=applied,
+            ))
+            applied_count += 1
+            total_applied += applied
+
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error applying return {id} to debts: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+    logger.info(f"Return {id} applied to {applied_count} debt(s), total {total_applied}")
+    return ApplyToDebtsResponse(applied_count=applied_count, total_applied=total_applied)
 
 
 # ---------- Agreement WhatsApp Message Endpoint ----------
