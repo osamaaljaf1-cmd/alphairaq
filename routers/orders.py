@@ -22,14 +22,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/entities/orders", tags=["orders"])
 
 
-async def _delete_owner_filter(db: AsyncSession, current_user: UserResponse) -> Optional[str]:
-    """Resolve the user_id to pass to OrdersService.delete(): None lets a
-    privileged caller delete any order, a string restricts to their own.
+async def _owner_filter(db: AsyncSession, current_user: UserResponse) -> Optional[str]:
+    """Resolve the user_id to pass to OrdersService.get_by_id/update/delete():
+    None lets a privileged caller act on any order, a string restricts to
+    their own.
 
-    Reps may only delete their own orders. Everyone else (admin, accounting,
+    Reps may only act on their own orders. Everyone else (admin, accounting,
     manager, delivery, or any account with no representative row at all,
-    e.g. an app_user-only account) can delete any order — mirrors the
-    role split used for customer visibility in services/area_scope.py."""
+    e.g. an app_user-only account) can act on any order — mirrors the
+    role split used for customer visibility in services/area_scope.py.
+    Without this, a manager/accounting approval on another rep's order
+    would look up the order filtered to the approver's own user_id, find
+    nothing, and 404 instead of advancing the workflow."""
     rep_result = await db.execute(
         select(Representatives).where(Representatives.user_id == current_user.id)
     )
@@ -224,12 +228,14 @@ async def get_orders(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single orders by ID (user can only see their own records)"""
+    """Get a single orders by ID. Reps are restricted to their own orders;
+    other roles can fetch any order (see _owner_filter)."""
     logger.debug(f"Fetching orders with id: {id}, fields={fields}")
-    
+
     service = OrdersService(db)
     try:
-        result = await service.get_by_id(id, user_id=str(current_user.id))
+        owner_filter = await _owner_filter(db, current_user)
+        result = await service.get_by_id(id, user_id=owner_filter)
         if not result:
             logger.warning(f"Orders with id {id} not found")
             raise HTTPException(status_code=404, detail="Orders not found")
@@ -328,14 +334,17 @@ async def update_orders(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing orders (requires ownership)"""
+    """Update an existing orders. Reps are restricted to their own orders;
+    other roles (manager/accounting approving another rep's order, etc.)
+    can update any order (see _owner_filter)."""
     logger.debug(f"Updating orders {id} with data: {data}")
 
     service = OrdersService(db)
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
+        owner_filter = await _owner_filter(db, current_user)
+        result = await service.update(id, update_dict, user_id=owner_filter)
         if not result:
             logger.warning(f"Orders with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Orders not found")
@@ -360,13 +369,13 @@ async def delete_orderss_batch(
 ):
     """Delete multiple orderss by their IDs. Requires can_delete permission
     on the orders page; reps are further restricted to their own orders
-    (see _delete_owner_filter)."""
+    (see _owner_filter)."""
     await require_permission(db, current_user, "orders", "delete")
     logger.debug(f"Batch deleting {len(request.ids)} orderss")
 
     service = OrdersService(db)
     deleted_count = 0
-    owner_filter = await _delete_owner_filter(db, current_user)
+    owner_filter = await _owner_filter(db, current_user)
 
     try:
         for item_id in request.ids:
@@ -390,13 +399,13 @@ async def delete_orders(
 ):
     """Delete a single orders by ID. Requires can_delete permission on the
     orders page; reps are further restricted to their own orders (see
-    _delete_owner_filter)."""
+    _owner_filter)."""
     await require_permission(db, current_user, "orders", "delete")
     logger.debug(f"Deleting orders with id: {id}")
 
     service = OrdersService(db)
     try:
-        owner_filter = await _delete_owner_filter(db, current_user)
+        owner_filter = await _owner_filter(db, current_user)
         success = await service.delete(id, user_id=owner_filter)
         if not success:
             logger.warning(f"Orders with id {id} not found for deletion")
