@@ -91,3 +91,41 @@ async def create_custom_role(
 
     logger.info(f"Custom role created: {name}")
     return CustomRoleItem(id=new_id, name=name)
+
+
+@router.delete("/{role_id}")
+async def delete_custom_role(
+    role_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Delete an internal role and its permission rows. Refuses if any
+    representative or app_user still has this role assigned, so deleting
+    a role in use doesn't silently strand those accounts. Requires
+    can_delete on the permissions page — role management is a
+    permissions-page action, same gate as create."""
+    await require_permission(db, current_user, "permissions", "delete")
+
+    result = await db.execute(text("SELECT name FROM custom_roles WHERE id = :id"), {"id": role_id})
+    name = result.scalar_one_or_none()
+    if not name:
+        raise HTTPException(status_code=404, detail="الدور غير موجود")
+
+    rep_count = (await db.execute(
+        text("SELECT COUNT(*) FROM representatives WHERE role = :name"), {"name": name}
+    )).scalar_one()
+    app_user_count = (await db.execute(
+        text("SELECT COUNT(*) FROM app_users WHERE role = :name"), {"name": name}
+    )).scalar_one()
+    if rep_count or app_user_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"لا يمكن حذف هذا الدور لأنه مستخدم حالياً من قبل {rep_count + app_user_count} مستخدم(ين). قم بتغيير دورهم أولاً.",
+        )
+
+    await db.execute(text("DELETE FROM permissions WHERE role = :name"), {"name": name})
+    await db.execute(text("DELETE FROM custom_roles WHERE id = :id"), {"id": role_id})
+    await db.commit()
+
+    logger.info(f"Custom role deleted: {name}")
+    return {"message": f'تم حذف الدور "{name}" بنجاح'}
