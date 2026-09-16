@@ -254,7 +254,7 @@ async def add_missing_columns(db: AsyncSession = Depends(get_db)):
 
 
 # Hardcoded list of roles and pages for permission seeding
-_SEED_ROLES = ("admin", "manager", "rep", "accounting", "delivery", "scientific", "sales")
+_SEED_ROLES = ("admin", "manager", "rep", "accounting", "delivery", "printing", "scientific", "sales")
 _SEED_PAGES = (
     "dashboard", "orders", "returns", "agreements", "target", "customers",
     "items", "map", "chat", "admin_users", "permissions", "areas",
