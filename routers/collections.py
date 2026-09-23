@@ -5,13 +5,14 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import select, and_, or_, cast, Date
+from sqlalchemy import select, and_, or_, cast, Date, func, false
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
 from models.activity_logs import Activity_logs
 from schemas.auth import UserResponse
+from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,17 @@ async def get_upcoming_collections(
     if user_id:
         query = query.where(Activity_logs.user_id == user_id)
 
+    # Restrict to the caller's own customers when they're a rep or manager
+    # (matches the same area/rep scoping used for debts and customer lists)
+    # — admin/accounting and other roles see everything, unrestricted.
+    scope = await get_customer_scope(db, current_user)
+    scoped_names = await get_scoped_pharmacy_names(db, scope)
+    if scoped_names is not None:
+        if not scoped_names:
+            query = query.where(false())
+        else:
+            query = query.where(func.lower(func.trim(Activity_logs.pharmacy_name)).in_(scoped_names))
+
     query = query.order_by(Activity_logs.collection_date.asc())
 
     result = await db.execute(query)
@@ -120,7 +132,11 @@ async def get_collection_notifications(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Get notification summary for current user - overdue + today's collections."""
+    """Get notification summary for current user - overdue + today's collections.
+
+    Restricted to the caller's own customers when they're a rep or manager
+    (same scoping as /upcoming) — admin/accounting and other roles see
+    everything, unrestricted."""
     today = date.today()
     tomorrow = today + timedelta(days=1)
 
@@ -132,6 +148,14 @@ async def get_collection_notifications(
             Activity_logs.collection_date <= tomorrow,
         )
     )
+
+    scope = await get_customer_scope(db, current_user)
+    scoped_names = await get_scoped_pharmacy_names(db, scope)
+    if scoped_names is not None:
+        if not scoped_names:
+            query = query.where(false())
+        else:
+            query = query.where(func.lower(func.trim(Activity_logs.pharmacy_name)).in_(scoped_names))
 
     result = await db.execute(query)
     logs = result.scalars().all()
