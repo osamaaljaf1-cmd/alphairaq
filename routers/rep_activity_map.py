@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +11,7 @@ from core.database import get_db
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.activity_logs import Activity_logs
+from models.agent_logs import Agent_logs
 from models.representatives import Representatives
 
 logger = logging.getLogger(__name__)
@@ -97,3 +98,64 @@ async def get_rep_activity_map(
     ]
 
     return RepActivityMapResponse(points=points, total=len(points), rep_name=rep_name)
+
+
+class LivePosition(BaseModel):
+    user_id: str
+    rep_id: Optional[int] = None
+    rep_name: Optional[str] = None
+    lat: float
+    lng: float
+    timestamp: Optional[datetime] = None
+
+
+class LivePositionsResponse(BaseModel):
+    points: List[LivePosition]
+    total: int
+
+
+@router.get("/live", response_model=LivePositionsResponse)
+async def get_live_rep_positions(
+    minutes: int = Query(20, ge=1, le=180, description="How recent a ping must be to count as 'currently here'"),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Most recent GPS ping per rep within the last `minutes`, for a live
+    "who's currently where" blip layer — separate from /map's historical
+    visit points, which come from activity_logs rather than the
+    continuous agent_logs location pings."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    query = (
+        select(Agent_logs)
+        .where(
+            Agent_logs.timestamp >= cutoff,
+            Agent_logs.latitude.isnot(None),
+            Agent_logs.longitude.isnot(None),
+        )
+        .order_by(Agent_logs.timestamp.desc())
+    )
+    result = await db.execute(query)
+    logs = result.scalars().all()
+
+    # Keep only the newest ping per user (logs are already newest-first).
+    latest_by_user: dict[str, Agent_logs] = {}
+    for log in logs:
+        if log.user_id not in latest_by_user:
+            latest_by_user[log.user_id] = log
+
+    rep_result = await db.execute(select(Representatives))
+    rep_by_user_id = {r.user_id: r for r in rep_result.scalars().all()}
+
+    points = [
+        LivePosition(
+            user_id=user_id,
+            rep_id=rep_by_user_id[user_id].id if user_id in rep_by_user_id else None,
+            rep_name=rep_by_user_id[user_id].name if user_id in rep_by_user_id else None,
+            lat=log.latitude,
+            lng=log.longitude,
+            timestamp=log.timestamp,
+        )
+        for user_id, log in latest_by_user.items()
+    ]
+
+    return LivePositionsResponse(points=points, total=len(points))
