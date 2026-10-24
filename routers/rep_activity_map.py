@@ -159,3 +159,73 @@ async def get_live_rep_positions(
     ]
 
     return LivePositionsResponse(points=points, total=len(points))
+
+
+class VisitCountBucket(BaseModel):
+    pharmacy: int = 0
+    doctor: int = 0
+    total: int = 0
+
+
+class VisitCountsResponse(BaseModel):
+    today: VisitCountBucket
+    yesterday: VisitCountBucket
+    month: VisitCountBucket
+
+
+_IRAQ_TZ = timezone(timedelta(hours=3))  # Baghdad, no DST
+
+
+@router.get("/visit-counts", response_model=VisitCountsResponse)
+async def get_visit_counts(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Pharmacy + doctor visit counts for today / yesterday / this month
+    (Baghdad calendar days). A rep sees their own visits, a manager their
+    assigned reps' (plus their own), everyone else sees all — the same
+    rep/manager scoping used for customers and debts."""
+    from services.area_scope import get_customer_scope
+
+    now = datetime.now(_IRAQ_TZ)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start = today_start - timedelta(days=1)
+    month_start = today_start.replace(day=1)
+    earliest = min(month_start, yesterday_start)
+
+    query = select(Activity_logs.type, Activity_logs.timestamp).where(
+        Activity_logs.type.in_(["pharmacy_visit", "doctor_visit"]),
+        Activity_logs.timestamp >= earliest,
+    )
+
+    scope = await get_customer_scope(db, current_user)
+    if not scope.unrestricted:
+        reps_result = await db.execute(
+            select(Representatives.user_id).where(Representatives.id.in_(scope.rep_ids))
+        )
+        user_ids = {row[0] for row in reps_result.all()} | {str(current_user.id)}
+        query = query.where(Activity_logs.user_id.in_(user_ids))
+
+    result = await db.execute(query)
+
+    counts = {k: VisitCountBucket() for k in ("today", "yesterday", "month")}
+
+    def add(bucket: VisitCountBucket, visit_type: str):
+        if visit_type == "pharmacy_visit":
+            bucket.pharmacy += 1
+        else:
+            bucket.doctor += 1
+        bucket.total += 1
+
+    for visit_type, ts in result.all():
+        if ts is None:
+            continue
+        local = ts.astimezone(_IRAQ_TZ)
+        if local >= today_start:
+            add(counts["today"], visit_type)
+        elif local >= yesterday_start:
+            add(counts["yesterday"], visit_type)
+        if local >= month_start:
+            add(counts["month"], visit_type)
+
+    return VisitCountsResponse(**counts)
