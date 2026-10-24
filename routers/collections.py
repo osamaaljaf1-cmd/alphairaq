@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from models.activity_logs import Activity_logs
+from models.payments import Payments
 from schemas.auth import UserResponse
 from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
 
@@ -39,6 +40,40 @@ class CollectionsResponse(BaseModel):
     today_count: int
     upcoming_count: int
     total: int
+
+
+async def _drop_paid_appointments(db: AsyncSession, logs):
+    """A collection appointment is resolved once the customer pays: drop any
+    appointment for which a non-cancelled payment was recorded for the same
+    customer AFTER the appointment was logged. Non-destructive — the visit
+    record stays, it just stops counting as an outstanding/overdue
+    appointment (and comes back if that payment is later cancelled)."""
+    if not logs:
+        return logs
+    earliest = min((l.timestamp for l in logs if l.timestamp), default=None)
+    query = select(Payments.customer_name, Payments.created_at).where(
+        or_(Payments.status.is_(None), Payments.status != "canceled")
+    )
+    if earliest is not None:
+        query = query.where(Payments.created_at >= earliest)
+    rows = (await db.execute(query)).all()
+
+    last_paid = {}
+    for name, created in rows:
+        if not name or created is None:
+            continue
+        key = name.strip().lower()
+        if key not in last_paid or created > last_paid[key]:
+            last_paid[key] = created
+
+    kept = []
+    for log in logs:
+        key = (log.pharmacy_name or "").strip().lower()
+        paid_at = last_paid.get(key)
+        if paid_at is not None and log.timestamp is not None and paid_at > log.timestamp:
+            continue
+        kept.append(log)
+    return kept
 
 
 @router.get("/upcoming", response_model=CollectionsResponse)
@@ -83,6 +118,7 @@ async def get_upcoming_collections(
 
     result = await db.execute(query)
     logs = result.scalars().all()
+    logs = await _drop_paid_appointments(db, logs)
 
     items: List[CollectionItem] = []
     overdue_count = 0
@@ -159,6 +195,7 @@ async def get_collection_notifications(
 
     result = await db.execute(query)
     logs = result.scalars().all()
+    logs = await _drop_paid_appointments(db, logs)
 
     notifications = []
     for log in logs:
