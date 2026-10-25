@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -8,6 +9,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -15,6 +17,7 @@ from dependencies.auth import get_current_user
 from models.debts import Debts
 from models.payments import Payments
 from models.payment_details import PaymentDetails
+from models.payment_handovers import PaymentHandovers
 from schemas.auth import UserResponse
 from services.debts import DebtsService
 from services.permission_check import require_permission, resolve_user_role
@@ -99,6 +102,29 @@ class PaymentResponse(BaseModel):
 
 class ConfirmHandoverRequest(BaseModel):
     payment_ids: List[int]
+    receipt_number: str  # accounting's manual receipt number written on the handover
+
+
+class HandoverBatch(BaseModel):
+    """One signed handover: the payments a rep handed to accounting under a
+    single manual receipt number."""
+    batch_id: str
+    receipt_number: str
+    rep_user_id: str
+    rep_name: str
+    confirmed_at: Optional[datetime] = None
+    confirmed_by_name: Optional[str] = None
+    payments_count: int
+    total_selected: float
+    total_discount: float
+    total_net: float
+    payments: List["PaymentResponse"]
+
+
+class HandoverArchiveResponse(BaseModel):
+    batches: List[HandoverBatch]
+    payments_count: int
+    total_net: float
 
 
 class HandoverRepSummary(BaseModel):
@@ -838,40 +864,172 @@ async def get_handover_summary(
     )
 
 
+_handover_table_ready = False
+
+
+async def _ensure_handover_table(db: AsyncSession) -> None:
+    """Create the handover-archive table on first use (idempotent). Keeps the
+    feature independent of the startup table creation, and — being a separate
+    table — never touches the payments table every other query depends on."""
+    global _handover_table_ready
+    if _handover_table_ready:
+        return
+    conn = await db.connection()
+    await conn.run_sync(lambda c: PaymentHandovers.__table__.create(c, checkfirst=True))
+    await db.commit()
+    _handover_table_ready = True
+
+
+async def _display_name(db: AsyncSession, user_id: str) -> Optional[str]:
+    from sqlalchemy import select
+    from models.representatives import Representatives
+    from models.app_users import App_users
+
+    rep = (await db.execute(select(Representatives.name).where(Representatives.user_id == user_id))).scalar_one_or_none()
+    if rep:
+        return rep
+    return (await db.execute(select(App_users.name).where(App_users.user_id == user_id))).scalar_one_or_none()
+
+
 @router.post("/payments/confirm-handover")
 async def confirm_handover(
     request: ConfirmHandoverRequest,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Accounting confirms it physically received cash a rep collected —
-    marks the given payments as handed_over, zeroing them out of that rep's
-    pending total. Supports confirming one payment or many (select-all) in
-    a single call. Requires can_delete on the debts page, same gate as
-    cancel_payment."""
+    """Accounting confirms it physically received the cash a rep collected and
+    records the manual receipt number written on that handover. The selected
+    payments are marked handed_over (zeroing them out of the rep's pending
+    total) and archived together under the receipt number. One handover covers
+    one rep. Requires can_delete on the debts page, same gate as cancel_payment."""
     await require_permission(db, current_user, "debts", "delete")
 
+    receipt_number = (request.receipt_number or "").strip()
+    if not receipt_number:
+        raise HTTPException(status_code=400, detail="رقم الإيصال اليدوي مطلوب")
+    if len(receipt_number) > 60:
+        raise HTTPException(status_code=400, detail="رقم الإيصال طويل جداً")
     if not request.payment_ids:
         raise HTTPException(status_code=400, detail="يرجى تحديد دفعة واحدة على الأقل")
 
     from sqlalchemy import select
 
+    await _ensure_handover_table(db)
+
     result = await db.execute(select(Payments).where(Payments.id.in_(request.payment_ids)))
-    payments = result.scalars().all()
+    payments = [p for p in result.scalars().all() if p.status != "canceled" and not p.handed_over]
+    if not payments:
+        raise HTTPException(status_code=400, detail="الدفعات المحددة مُسلَّمة أو ملغاة مسبقاً")
+    if len({p.user_id for p in payments}) > 1:
+        raise HTTPException(status_code=400, detail="يتم التسليم لكل مندوب بإيصال مستقل — حدد دفعات مندوب واحد")
 
     now = datetime.now(timezone.utc)
-    confirmed_count = 0
+    batch_id = uuid.uuid4().hex
+    confirmed_by_name = await _display_name(db, str(current_user.id))
     for p in payments:
-        if p.status == "canceled" or p.handed_over:
-            continue
         p.handed_over = True
         p.handed_over_at = now
         p.handed_over_by = str(current_user.id)
-        confirmed_count += 1
+        db.add(PaymentHandovers(
+            payment_id=p.id,
+            batch_id=batch_id,
+            receipt_number=receipt_number,
+            rep_user_id=p.user_id,
+            confirmed_by=str(current_user.id),
+            confirmed_by_name=confirmed_by_name,
+            confirmed_at=now,
+        ))
 
     await db.commit()
-    logger.info(f"Confirmed handover for {confirmed_count} payments by {current_user.id}")
-    return {"success": True, "confirmed_count": confirmed_count}
+    logger.info(f"Handover {receipt_number}: {len(payments)} payments confirmed by {current_user.id}")
+    return {
+        "success": True,
+        "confirmed_count": len(payments),
+        "batch_id": batch_id,
+        "receipt_number": receipt_number,
+    }
+
+
+@router.get("/payments/handover-archive", response_model=HandoverArchiveResponse)
+async def get_handover_archive(
+    rep_user_id: Optional[str] = None,
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD (handover date, inclusive)"),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD (handover date, inclusive)"),
+    search: Optional[str] = Query(None, description="Receipt number or pharmacy name"),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """The archive of confirmed handovers, newest first: one entry per manual
+    receipt number (per rep), with the payments it covers. A rep sees their
+    own, a manager their team's, accounting/admin everything."""
+    from datetime import date as date_cls, timedelta
+    from sqlalchemy import select
+    from services.access import visible_user_ids
+
+    await _ensure_handover_table(db)
+
+    query = select(PaymentHandovers, Payments).join(Payments, Payments.id == PaymentHandovers.payment_id)
+    query = query.where(or_(Payments.status.is_(None), Payments.status != "canceled"))
+    visible = await visible_user_ids(db, current_user)
+    if visible is not None:
+        query = query.where(PaymentHandovers.rep_user_id.in_(visible))
+    if rep_user_id:
+        query = query.where(PaymentHandovers.rep_user_id == rep_user_id)
+    try:
+        if date_from:
+            query = query.where(PaymentHandovers.confirmed_at >= datetime.combine(date_cls.fromisoformat(date_from), datetime.min.time(), tzinfo=timezone.utc))
+        if date_to:
+            query = query.where(PaymentHandovers.confirmed_at < datetime.combine(date_cls.fromisoformat(date_to) + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="تنسيق التاريخ غير صحيح")
+    if search and search.strip():
+        like = f"%{search.strip().lower()}%"
+        query = query.where(or_(func.lower(PaymentHandovers.receipt_number).like(like), func.lower(Payments.customer_name).like(like)))
+
+    rows = (await db.execute(query.order_by(PaymentHandovers.confirmed_at.desc(), Payments.id.asc()))).all()
+
+    payment_ids = [pay.id for _, pay in rows]
+    invoices_by_payment: dict[int, list[str]] = {}
+    if payment_ids:
+        detail_rows = await db.execute(
+            select(PaymentDetails.payment_id, Debts.invoice_number)
+            .join(Debts, Debts.id == PaymentDetails.debt_id)
+            .where(PaymentDetails.payment_id.in_(payment_ids))
+        )
+        for payment_id, invoice_number in detail_rows.all():
+            invoices_by_payment.setdefault(payment_id, []).append(invoice_number)
+
+    batches: dict[str, HandoverBatch] = {}
+    for handover, pay in rows:
+        batch = batches.get(handover.batch_id)
+        if batch is None:
+            batch = batches[handover.batch_id] = HandoverBatch(
+                batch_id=handover.batch_id,
+                receipt_number=handover.receipt_number,
+                rep_user_id=handover.rep_user_id,
+                rep_name=pay.rep_name or "غير معروف",
+                confirmed_at=handover.confirmed_at,
+                confirmed_by_name=handover.confirmed_by_name,
+                payments_count=0,
+                total_selected=0.0,
+                total_discount=0.0,
+                total_net=0.0,
+                payments=[],
+            )
+        batch.payments_count += 1
+        batch.total_selected += pay.total_selected or 0
+        batch.total_discount += pay.discount or 0
+        batch.total_net += pay.net_received or 0
+        batch.payments.append(
+            PaymentResponse.model_validate(pay).model_copy(update={"applied_invoices": invoices_by_payment.get(pay.id, [])})
+        )
+
+    ordered = list(batches.values())
+    return HandoverArchiveResponse(
+        batches=ordered,
+        payments_count=sum(b.payments_count for b in ordered),
+        total_net=sum(b.total_net for b in ordered),
+    )
 
 
 # ---------- Payment Receipt Photo (archive) ----------
