@@ -126,6 +126,7 @@ class BulkSetTargetsRequest(BaseModel):
 class BulkSetTargetsResponse(BaseModel):
     inserted: int
     updated: int
+    removed: int = 0
 
 
 @router.put("/bulk", response_model=BulkSetTargetsResponse)
@@ -138,13 +139,16 @@ async def bulk_set_rep_targets(
     (e.g. an Excel import with rep name + product name + quantity columns
     covering several representatives). Unlike PUT /rep-targets, this only
     touches the (rep, product) rows given here and leaves every other
-    product target already saved for those reps/month untouched. Requires
+    product target already saved for those reps/month untouched. A row
+    with a zero quantity means "not required" and removes an existing
+    target for that rep/product. Requires
     can_import permission on the target page, matching the frontend's
     canImport('target') gate on the Excel-import trigger."""
     await require_permission(db, current_user, "target", "import")
 
     inserted = 0
     updated = 0
+    removed = 0
     for item in data.items:
         result = await db.execute(
             select(RepTargets).where(
@@ -155,6 +159,12 @@ async def bulk_set_rep_targets(
             )
         )
         row = result.scalar_one_or_none()
+        if item.target_qty <= 0:
+            # no quantity = the item is not required for this rep
+            if row:
+                await db.delete(row)
+                removed += 1
+            continue
         if row:
             row.target_qty = item.target_qty
             updated += 1
@@ -170,6 +180,6 @@ async def bulk_set_rep_targets(
 
     await db.commit()
     logger.info(
-        f"Bulk rep targets for {data.year}-{data.month}: {inserted} inserted, {updated} updated"
+        f"Bulk rep targets for {data.year}-{data.month}: {inserted} inserted, {updated} updated, {removed} removed"
     )
-    return BulkSetTargetsResponse(inserted=inserted, updated=updated)
+    return BulkSetTargetsResponse(inserted=inserted, updated=updated, removed=removed)
