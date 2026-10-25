@@ -132,6 +132,7 @@ async def query_chat_messagess_all(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     # Query chat_messagess with filtering, sorting, and pagination without user limitation
     logger.debug(f"Querying chat_messagess: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")

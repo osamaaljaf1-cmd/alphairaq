@@ -137,6 +137,7 @@ async def query_order_itemss_all(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     # Query order_itemss with filtering, sorting, and pagination without user limitation
     logger.debug(f"Querying order_itemss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
