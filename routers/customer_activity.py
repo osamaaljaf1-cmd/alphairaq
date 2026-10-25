@@ -19,6 +19,8 @@ from models.pharmacies import Pharmacies
 from models.doctors import Doctors
 from models.products import Products
 from models.representatives import Representatives
+from services.access import require_view_any
+from services.area_scope import get_customer_scope
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,19 @@ class CustomerActivityResponse(BaseModel):
     customer_name: str
     debt_summary: DebtSummary
     events: List[ActivityEvent]
+
+
+async def _ensure_in_scope(db: AsyncSession, current_user: UserResponse, area_id, representative_id) -> None:
+    """A rep/manager may only open the activity log of a customer in their own
+    scope (assigned areas or reps) — the same rule the customer lists use."""
+    scope = await get_customer_scope(db, current_user)
+    if scope.unrestricted:
+        return
+    if (area_id is not None and area_id in scope.area_ids) or (
+        representative_id is not None and representative_id in scope.rep_ids
+    ):
+        return
+    raise HTTPException(status_code=403, detail="هذا الزبون خارج نطاق صلاحياتك")
 
 
 async def _debt_summary(db: AsyncSession, customer_name: str) -> DebtSummary:
@@ -196,10 +211,12 @@ async def get_pharmacy_activity(
 ):
     """Chronological timeline for one pharmacy (sales, returns, payments, debts, visit reports,
     collection appointments), with its current debt total."""
+    await require_view_any(db, current_user, ("customers",))
     result = await db.execute(select(Pharmacies).where(Pharmacies.id == pharmacy_id))
     pharmacy = result.scalar_one_or_none()
     if not pharmacy:
         raise HTTPException(status_code=404, detail="الصيدلية غير موجودة")
+    await _ensure_in_scope(db, current_user, pharmacy.area_id, pharmacy.representative_id)
 
     events = await _build_timeline(db, pharmacy.name, pharmacy_id=pharmacy_id)
     debt = await _debt_summary(db, pharmacy.name)
@@ -214,10 +231,12 @@ async def get_doctor_activity(
 ):
     """Chronological timeline for one doctor (sales, returns, payments, debts, visit reports),
     with its current debt total."""
+    await require_view_any(db, current_user, ("customers",))
     result = await db.execute(select(Doctors).where(Doctors.id == doctor_id))
     doctor = result.scalar_one_or_none()
     if not doctor:
         raise HTTPException(status_code=404, detail="الطبيب غير موجود")
+    await _ensure_in_scope(db, current_user, doctor.area_id, doctor.representative_id)
 
     events = await _build_timeline(db, doctor.name, doctor_id=doctor_id)
     debt = await _debt_summary(db, doctor.name)

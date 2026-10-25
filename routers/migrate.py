@@ -3,6 +3,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from core.database import get_db
+from services.access import require_admin
+from schemas.auth import UserResponse
+from dependencies.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +108,11 @@ def _build_alter_sql(table_name: str, col_name: str, col_type: str) -> str | Non
 
 
 @router.post("/add_columns")
-async def add_missing_columns(db: AsyncSession = Depends(get_db)):
+async def add_missing_columns(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    await require_admin(db, current_user, strict=True)
     """Add missing columns to all tables and create messages table"""
     results = []
 
@@ -267,7 +274,10 @@ _DEFAULT_VIEW_ALL_PAGES = frozenset({"doctor_visits", "pharmacy_visits"})
 
 
 @router.post("/seed-permissions")
-async def seed_permissions(db: AsyncSession = Depends(get_db)):
+async def seed_permissions(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
     """
     Seed missing permission records for all role+page combinations.
     Only inserts rows that don't already exist (idempotent).
@@ -328,7 +338,10 @@ async def seed_permissions(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/grant-visit-permissions")
-async def grant_visit_permissions(db: AsyncSession = Depends(get_db)):
+async def grant_visit_permissions(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
     """
     Grant can_view=True for doctor_visits and pharmacy_visits to ALL existing roles.
     This updates existing permission records that have can_view=False, and creates
@@ -387,7 +400,11 @@ async def grant_visit_permissions(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/backfill-area-ids")
-async def backfill_area_ids(db: AsyncSession = Depends(get_db)):
+async def backfill_area_ids(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    await require_admin(db, current_user, strict=True)
     """One-time bridge for the new area-based visibility restriction: pharmacies
     and doctors only ever had a free-text `area` string, unrelated to the
     `areas` table used by the rep-area assignment feature. For every
@@ -469,7 +486,11 @@ TEST_PAYMENT_IDS = [1, 2, 3, 4, 5, 6, 7]
 
 
 @router.post("/cleanup-test-payments")
-async def cleanup_test_payments(db: AsyncSession = Depends(get_db)):
+async def cleanup_test_payments(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    await require_admin(db, current_user, strict=True)
     """Cancel the known test/seed payment rows so they stop counting toward
     the cash-handover confirmed_total. Idempotent: already-canceled rows are
     skipped. None of these rows have any applied_invoices, so canceling them

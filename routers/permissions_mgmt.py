@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from schemas.auth import UserResponse
+from dependencies.auth import get_current_user
 from services.permissions import PermissionsService
 from services.areas import AreasService
 from services.representative_areas import Representative_areasService
@@ -128,9 +130,10 @@ class SetRepAreasRequest(BaseModel):
 async def list_permissions(
     data: GetPermissionsRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """List all permissions (admin/manager only)"""
-    await verify_admin_or_manager(db, data.user_id)
+    await verify_admin_or_manager(db, current_user.id)
     service = PermissionsService(db)
     try:
         result = await service.get_list(skip=0, limit=500)
@@ -169,9 +172,10 @@ async def get_permissions_by_role(
 async def update_permissions(
     data: UpdatePermissionRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Update multiple permissions (admin only)"""
-    role = await verify_admin_or_manager(db, data.admin_user_id)
+    role = await verify_admin_or_manager(db, current_user.id)
     if role != "admin":
         raise HTTPException(status_code=403, detail="فقط المسؤول يمكنه تعديل الصلاحيات")
 
@@ -227,9 +231,10 @@ async def list_areas(
 async def create_area(
     data: CreateAreaRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Create a new area (admin only)"""
-    await verify_admin_or_manager(db, data.admin_user_id)
+    await verify_admin_or_manager(db, current_user.id)
     service = AreasService(db)
     try:
         create_data = {"name": data.name}
@@ -251,9 +256,10 @@ async def update_area(
     area_id: int,
     data: UpdateAreaRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Update an area (admin only)"""
-    await verify_admin_or_manager(db, data.admin_user_id)
+    await verify_admin_or_manager(db, current_user.id)
     service = AreasService(db)
     try:
         update_data = {}
@@ -279,9 +285,10 @@ async def delete_area(
     area_id: int,
     data: DeleteAreaRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Delete an area (admin only)"""
-    await verify_admin_or_manager(db, data.admin_user_id)
+    await verify_admin_or_manager(db, current_user.id)
     service = AreasService(db)
     try:
         result = await service.delete(area_id)
@@ -318,9 +325,10 @@ async def list_rep_areas(
 async def set_rep_areas(
     data: SetRepAreasRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Set areas for a representative (replaces existing assignments)"""
-    await verify_admin_or_manager(db, data.admin_user_id)
+    await verify_admin_or_manager(db, current_user.id)
     service = Representative_areasService(db)
     try:
         # Get existing assignments for this rep

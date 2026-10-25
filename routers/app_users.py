@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from services.access import require_admin
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from services.app_users import App_usersService
@@ -91,6 +92,7 @@ async def query_app_userss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Query app_userss with filtering, sorting, and pagination"""
     logger.debug(f"Querying app_userss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
@@ -163,6 +165,7 @@ async def get_app_users(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single app_users by ID"""
     logger.debug(f"Fetching app_users with id: {id}, fields={fields}")
@@ -186,7 +189,9 @@ async def get_app_users(
 async def create_app_users(
     data: App_usersData,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_admin(db, current_user, strict=True)
     """Create a new app_users"""
     logger.debug(f"Creating new app_users with data: {data}")
     
@@ -210,7 +215,9 @@ async def create_app_users(
 async def create_app_userss_batch(
     request: App_usersBatchCreateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_admin(db, current_user, strict=True)
     """Create multiple app_userss in a single request"""
     logger.debug(f"Batch creating {len(request.items)} app_userss")
     
@@ -235,7 +242,9 @@ async def create_app_userss_batch(
 async def update_app_userss_batch(
     request: App_usersBatchUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_admin(db, current_user, strict=True)
     """Update multiple app_userss in a single request"""
     logger.debug(f"Batch updating {len(request.items)} app_userss")
     
@@ -263,7 +272,9 @@ async def update_app_users(
     id: int,
     data: App_usersUpdateData,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_admin(db, current_user, strict=True)
     """Update an existing app_users"""
     logger.debug(f"Updating app_users {id} with data: {data}")
 
@@ -292,7 +303,9 @@ async def update_app_users(
 async def delete_app_userss_batch(
     request: App_usersBatchDeleteRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_admin(db, current_user, strict=True)
     """Delete multiple app_userss by their IDs"""
     logger.debug(f"Batch deleting {len(request.ids)} app_userss")
     
@@ -317,7 +330,9 @@ async def delete_app_userss_batch(
 async def delete_app_users(
     id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_admin(db, current_user, strict=True)
     """Delete a single app_users by ID"""
     logger.debug(f"Deleting app_users with id: {id}")
     

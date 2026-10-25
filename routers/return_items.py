@@ -11,6 +11,7 @@ from core.database import get_db
 from services.return_items import Return_itemsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from services.access import require_view_any, visible_user_ids
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -130,6 +131,8 @@ async def query_return_itemss_all(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_view_any(db, current_user, ("returns", "orders", "dashboard", "target", "rep_operations"))
+    user_ids = await visible_user_ids(db, current_user)
     # Query return_itemss with filtering, sorting, and pagination without user limitation
     logger.debug(f"Querying return_itemss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 
@@ -144,6 +147,7 @@ async def query_return_itemss_all(
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
 
         result = await service.get_list(
+            user_ids=user_ids,
             skip=skip,
             limit=limit,
             query_dict=query_dict,

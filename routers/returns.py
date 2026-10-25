@@ -13,6 +13,7 @@ from core.database import get_db
 from services.returns import ReturnsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from services.access import require_view_any, visible_user_ids
 from models.representatives import Representatives
 from models.debts import Debts
 from models.debt_return_applications import Debt_return_applications
@@ -171,6 +172,8 @@ async def query_returnss_all(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_view_any(db, current_user, ("returns", "orders", "dashboard", "target", "rep_operations"))
+    user_ids = await visible_user_ids(db, current_user)
     # Query returnss with filtering, sorting, and pagination without user limitation
     logger.debug(f"Querying returnss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 
@@ -185,6 +188,7 @@ async def query_returnss_all(
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
 
         result = await service.get_list(
+            user_ids=user_ids,
             skip=skip,
             limit=limit,
             query_dict=query_dict,

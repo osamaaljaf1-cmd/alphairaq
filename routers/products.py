@@ -95,6 +95,7 @@ async def query_productss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Query productss with filtering, sorting, and pagination"""
     logger.debug(f"Querying productss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
@@ -167,6 +168,7 @@ async def get_products(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single products by ID"""
     logger.debug(f"Fetching products with id: {id}, fields={fields}")

@@ -186,6 +186,7 @@ async def get_doctors(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single doctors by ID"""
     logger.debug(f"Fetching doctors with id: {id}, fields={fields}")

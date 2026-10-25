@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from services.permission_check import require_permission
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from services.user_assignments import User_assignmentsService
@@ -85,6 +86,7 @@ async def query_user_assignmentss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Query user_assignmentss with filtering, sorting, and pagination"""
     logger.debug(f"Querying user_assignmentss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
@@ -157,6 +159,7 @@ async def get_user_assignments(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single user_assignments by ID"""
     logger.debug(f"Fetching user_assignments with id: {id}, fields={fields}")
@@ -180,7 +183,9 @@ async def get_user_assignments(
 async def create_user_assignments(
     data: User_assignmentsData,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Create a new user_assignments"""
     logger.debug(f"Creating new user_assignments with data: {data}")
     
@@ -204,7 +209,9 @@ async def create_user_assignments(
 async def create_user_assignmentss_batch(
     request: User_assignmentsBatchCreateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Create multiple user_assignmentss in a single request"""
     logger.debug(f"Batch creating {len(request.items)} user_assignmentss")
     
@@ -229,7 +236,9 @@ async def create_user_assignmentss_batch(
 async def update_user_assignmentss_batch(
     request: User_assignmentsBatchUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Update multiple user_assignmentss in a single request"""
     logger.debug(f"Batch updating {len(request.items)} user_assignmentss")
     
@@ -257,7 +266,9 @@ async def update_user_assignments(
     id: int,
     data: User_assignmentsUpdateData,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Update an existing user_assignments"""
     logger.debug(f"Updating user_assignments {id} with data: {data}")
 
@@ -286,7 +297,9 @@ async def update_user_assignments(
 async def delete_user_assignmentss_batch(
     request: User_assignmentsBatchDeleteRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Delete multiple user_assignmentss by their IDs"""
     logger.debug(f"Batch deleting {len(request.ids)} user_assignmentss")
     
@@ -311,7 +324,9 @@ async def delete_user_assignmentss_batch(
 async def delete_user_assignments(
     id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Delete a single user_assignments by ID"""
     logger.debug(f"Deleting user_assignments with id: {id}")
     

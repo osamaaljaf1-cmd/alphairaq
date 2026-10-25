@@ -58,6 +58,7 @@ class Order_itemsService:
         skip: int = 0, 
         limit: int = 20, 
         user_id: Optional[str] = None,
+        user_ids: Optional[set] = None,
         query_dict: Optional[Dict[str, Any]] = None,
         sort: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -69,6 +70,9 @@ class Order_itemsService:
             if user_id:
                 query = query.where(Order_items.user_id == user_id)
                 count_query = count_query.where(Order_items.user_id == user_id)
+            if user_ids is not None:
+                query = query.where(Order_items.user_id.in_(user_ids))
+                count_query = count_query.where(Order_items.user_id.in_(user_ids))
             
             if query_dict:
                 for field, value in query_dict.items():

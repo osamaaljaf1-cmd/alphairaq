@@ -13,6 +13,7 @@ from schemas.auth import UserResponse
 from models.activity_logs import Activity_logs
 from models.agent_logs import Agent_logs
 from models.representatives import Representatives
+from services.access import require_view_any, visible_user_ids
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,14 @@ async def get_rep_activity_map(
 ):
     """Geotagged field-visit points for one rep (or all reps) within a date range,
     for plotting movement/density on a map."""
+    await require_view_any(db, current_user, ("rep_activity_map", "map"))
     query = select(Activity_logs).where(
         Activity_logs.latitude.isnot(None),
         Activity_logs.longitude.isnot(None),
     )
+    user_ids = await visible_user_ids(db, current_user)
+    if user_ids is not None:
+        query = query.where(Activity_logs.user_id.in_(user_ids))
 
     if rep_id is not None:
         query = query.where(Activity_logs.rep_id == rep_id)
@@ -124,6 +129,7 @@ async def get_live_rep_positions(
     "who's currently where" blip layer — separate from /map's historical
     visit points, which come from activity_logs rather than the
     continuous agent_logs location pings."""
+    await require_view_any(db, current_user, ("rep_activity_map", "map"))
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     query = (
         select(Agent_logs)
@@ -134,6 +140,9 @@ async def get_live_rep_positions(
         )
         .order_by(Agent_logs.timestamp.desc())
     )
+    user_ids = await visible_user_ids(db, current_user)
+    if user_ids is not None:
+        query = query.where(Agent_logs.user_id.in_(user_ids))
     result = await db.execute(query)
     logs = result.scalars().all()
 

@@ -8,7 +8,9 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from dependencies.auth import get_current_user
+from schemas.auth import UserResponse
 from schemas.aihub import GenImgRequest, GenImgResponse, GenTxtRequest
 from services.aihub import AIHubService, InvalidImageInputError
 from sse_starlette.sse import EventSourceResponse
@@ -99,6 +101,7 @@ router = APIRouter(prefix="/api/v1/aihub", tags=["aihub"])
 @router.post("/gentxt")
 async def generate_text(
     request: GenTxtRequest,
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """
     Generate Text endpoint (supports text and image input).
@@ -150,6 +153,7 @@ async def generate_text(
 @router.post("/genimg", response_model=GenImgResponse)
 async def generate_image(
     request: GenImgRequest,
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """
     Text-to-Image / Image-to-Image endpoint.

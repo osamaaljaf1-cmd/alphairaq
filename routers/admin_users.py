@@ -106,9 +106,10 @@ class UsersListResponse(BaseModel):
 async def local_list_users(
     data: LocalListRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """List all users (local admin auth)"""
-    if not await verify_local_admin(db, data.user_id):
+    if not await verify_local_admin(db, current_user.id):
         raise HTTPException(status_code=403, detail="صلاحيات المسؤول مطلوبة")
 
     service = App_usersService(db)
@@ -126,9 +127,10 @@ async def local_list_users(
 async def local_create_user(
     data: LocalCreateUserRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Create a new user (local admin auth)"""
-    if not await verify_local_admin(db, data.admin_user_id):
+    if not await verify_local_admin(db, current_user.id):
         raise HTTPException(status_code=403, detail="صلاحيات المسؤول مطلوبة")
 
     service = App_usersService(db)
@@ -183,9 +185,10 @@ async def local_update_user(
     user_id: int,
     data: LocalUpdateUserRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Update user role or status (local admin auth)"""
-    if not await verify_local_admin(db, data.admin_user_id):
+    if not await verify_local_admin(db, current_user.id):
         raise HTTPException(status_code=403, detail="صلاحيات المسؤول مطلوبة")
 
     service = App_usersService(db)
@@ -243,9 +246,10 @@ async def local_change_password(
     user_id: int,
     data: LocalChangePasswordRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Change a user's password (local admin auth)"""
-    if not await verify_local_admin(db, data.admin_user_id):
+    if not await verify_local_admin(db, current_user.id):
         raise HTTPException(status_code=403, detail="صلاحيات المسؤول مطلوبة")
 
     if not data.new_password or len(data.new_password) < 4:
@@ -277,9 +281,10 @@ async def local_delete_user(
     user_id: int,
     data: LocalDeleteUserRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Delete a user (local admin auth)"""
-    if not await verify_local_admin(db, data.admin_user_id):
+    if not await verify_local_admin(db, current_user.id):
         raise HTTPException(status_code=403, detail="صلاحيات المسؤول مطلوبة")
 
     service = App_usersService(db)

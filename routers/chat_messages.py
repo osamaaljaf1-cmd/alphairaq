@@ -12,6 +12,7 @@ from core.database import get_db
 from services.chat_messages import Chat_messagesService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from services.access import require_admin
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -134,6 +135,7 @@ async def query_chat_messagess_all(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_admin(db, current_user)
     # Query chat_messagess with filtering, sorting, and pagination without user limitation
     logger.debug(f"Querying chat_messagess: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 

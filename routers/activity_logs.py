@@ -12,6 +12,7 @@ from core.database import get_db
 from services.activity_logs import Activity_logsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from services.access import require_view_any, visible_user_ids
 from services.permission_check import require_permission
 
 # Set up logging
@@ -278,6 +279,8 @@ async def query_activity_logss_all(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_view_any(db, current_user, ("dashboard", "pharmacy_visits", "doctor_visits", "rep_activity_map", "rep_operations", "orders", "returns", "debts", "target"))
+    user_ids = await visible_user_ids(db, current_user)
     # Query activity_logss with filtering, sorting, and pagination without user limitation
     # (any signed-in user; this used to be open to unauthenticated requests)
     logger.debug(f"Querying activity_logss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
@@ -293,6 +296,7 @@ async def query_activity_logss_all(
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
 
         result = await service.get_list(
+            user_ids=user_ids,
             skip=skip,
             limit=limit,
             query_dict=query_dict,

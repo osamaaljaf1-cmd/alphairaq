@@ -12,6 +12,7 @@ from core.database import get_db
 from services.user_presence import User_presenceService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from services.access import require_view_any
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -125,6 +126,7 @@ async def query_user_presences_all(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_view_any(db, current_user, ("chat", "admin_users"))
     # Query user_presences with filtering, sorting, and pagination without user limitation
     logger.debug(f"Querying user_presences: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 

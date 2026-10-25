@@ -147,6 +147,7 @@ async def check_agreement(
     pharmacy_id: int = Query(..., description="Pharmacy ID"),
     item_id: int = Query(..., description="Product/Item ID"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Check if an active agreement exists for a pharmacy + item combination.
     Returns the agreement with doctor_name and item_name if found, else null."""
@@ -223,6 +224,7 @@ async def query_agreementss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Query agreementss with filtering, sorting, and pagination"""
     logger.debug(f"Querying agreementss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
@@ -295,6 +297,7 @@ async def get_agreements(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single agreements by ID"""
     logger.debug(f"Fetching agreements with id: {id}, fields={fields}")

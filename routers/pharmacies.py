@@ -189,6 +189,7 @@ async def query_pharmaciess_all(
 async def get_near_pharmacies(
     doctor_id: int = Query(..., description="Doctor ID to find nearby pharmacies"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get pharmacies near a doctor based on matching area"""
     logger.debug(f"Finding pharmacies near doctor_id={doctor_id}")
@@ -229,6 +230,7 @@ async def get_pharmacies(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single pharmacies by ID"""
     logger.debug(f"Fetching pharmacies with id: {id}, fields={fields}")

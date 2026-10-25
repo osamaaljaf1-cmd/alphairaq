@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from services.permission_check import require_permission
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from services.representative_areas import Representative_areasService
@@ -79,6 +80,7 @@ async def query_representative_areass(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Query representative_areass with filtering, sorting, and pagination"""
     logger.debug(f"Querying representative_areass: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
@@ -151,6 +153,7 @@ async def get_representative_areas(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     """Get a single representative_areas by ID"""
     logger.debug(f"Fetching representative_areas with id: {id}, fields={fields}")
@@ -174,7 +177,9 @@ async def get_representative_areas(
 async def create_representative_areas(
     data: Representative_areasData,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Create a new representative_areas"""
     logger.debug(f"Creating new representative_areas with data: {data}")
     
@@ -198,7 +203,9 @@ async def create_representative_areas(
 async def create_representative_areass_batch(
     request: Representative_areasBatchCreateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Create multiple representative_areass in a single request"""
     logger.debug(f"Batch creating {len(request.items)} representative_areass")
     
@@ -223,7 +230,9 @@ async def create_representative_areass_batch(
 async def update_representative_areass_batch(
     request: Representative_areasBatchUpdateRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Update multiple representative_areass in a single request"""
     logger.debug(f"Batch updating {len(request.items)} representative_areass")
     
@@ -251,7 +260,9 @@ async def update_representative_areas(
     id: int,
     data: Representative_areasUpdateData,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Update an existing representative_areas"""
     logger.debug(f"Updating representative_areas {id} with data: {data}")
 
@@ -280,7 +291,9 @@ async def update_representative_areas(
 async def delete_representative_areass_batch(
     request: Representative_areasBatchDeleteRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Delete multiple representative_areass by their IDs"""
     logger.debug(f"Batch deleting {len(request.ids)} representative_areass")
     
@@ -305,7 +318,9 @@ async def delete_representative_areass_batch(
 async def delete_representative_areas(
     id: int,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
+    await require_permission(db, current_user, "permissions", "edit")
     """Delete a single representative_areas by ID"""
     logger.debug(f"Deleting representative_areas with id: {id}")
     

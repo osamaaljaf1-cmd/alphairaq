@@ -4,6 +4,9 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from services.access import require_admin
+from schemas.auth import UserResponse
+from dependencies.auth import get_current_user
 from core.auth import create_access_token
 from core.password import hash_password, verify_password, is_legacy_hash
 from services.app_users import App_usersService
@@ -111,8 +114,10 @@ class ResetPasswordRequest(BaseModel):
 async def reset_password(
     data: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    """Reset a user's password (admin key or admin user required)"""
+    """Reset a user's password (signed-in admin only)"""
+    await require_admin(db, current_user, strict=True)
     try:
         service = App_usersService(db)
 
