@@ -41,12 +41,11 @@ class App_usersUpdateData(BaseModel):
 
 
 class App_usersResponse(BaseModel):
-    """Entity response schema"""
+    """Entity response schema (never includes the password hash)"""
     id: int
     user_id: str
     name: str
     email: str
-    password_hash: str
     role: str
     status: str
 
