@@ -13,25 +13,11 @@ from services.areas import AreasService
 from services.representative_areas import Representative_areasService
 from services.app_users import App_usersService
 from services.representatives import RepresentativesService
+from services.permission_check import require_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/permissions-mgmt", tags=["permissions-mgmt"])
-
-
-async def verify_admin_or_manager(db: AsyncSession, user_id: str) -> str:
-    """Verify that the given user_id belongs to an admin or manager. Returns the role."""
-    if not user_id:
-        raise HTTPException(status_code=403, detail="صلاحيات غير كافية")
-    service = App_usersService(db)
-    user = await service.get_by_field("user_id", user_id)
-    if user and user.role in ("admin", "manager") and user.status == "active":
-        return user.role
-    rep_service = RepresentativesService(db)
-    rep = await rep_service.get_by_field("user_id", user_id)
-    if rep and rep.role in ("admin", "manager"):
-        return rep.role
-    raise HTTPException(status_code=403, detail="صلاحيات غير كافية")
 
 
 # ============================================================
@@ -132,8 +118,8 @@ async def list_permissions(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """List all permissions (admin/manager only)"""
-    await verify_admin_or_manager(db, current_user.id)
+    """List all permissions (roles allowed to view the permissions page)"""
+    await require_permission(db, current_user, "permissions", "view")
     service = PermissionsService(db)
     try:
         result = await service.get_list(skip=0, limit=500)
@@ -174,12 +160,16 @@ async def update_permissions(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Update multiple permissions (admin only)"""
-    role = await verify_admin_or_manager(db, current_user.id)
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="فقط المسؤول يمكنه تعديل الصلاحيات")
+    """Update multiple permissions. Allowed for any role granted edit on the
+    permissions page; only an admin may change the admin role's own rows."""
+    caller_role = await require_permission(db, current_user, "permissions", "edit")
 
     service = PermissionsService(db)
+    if caller_role not in (None, "admin"):
+        for perm in data.permissions:
+            row = await service.get_by_id(perm["id"]) if perm.get("id") else None
+            if row is not None and row.role == "admin":
+                raise HTTPException(status_code=403, detail="فقط المسؤول يمكنه تعديل صلاحيات المسؤول")
     try:
         updated = 0
         for perm in data.permissions:
@@ -233,8 +223,8 @@ async def create_area(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Create a new area (admin only)"""
-    await verify_admin_or_manager(db, current_user.id)
+    """Create a new area (needs add on the areas page)"""
+    await require_permission(db, current_user, "areas", "add")
     service = AreasService(db)
     try:
         create_data = {"name": data.name}
@@ -258,8 +248,8 @@ async def update_area(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Update an area (admin only)"""
-    await verify_admin_or_manager(db, current_user.id)
+    """Update an area (needs edit on the areas page)"""
+    await require_permission(db, current_user, "areas", "edit")
     service = AreasService(db)
     try:
         update_data = {}
@@ -287,8 +277,8 @@ async def delete_area(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Delete an area (admin only)"""
-    await verify_admin_or_manager(db, current_user.id)
+    """Delete an area (needs delete on the areas page)"""
+    await require_permission(db, current_user, "areas", "delete")
     service = AreasService(db)
     try:
         result = await service.delete(area_id)
@@ -327,8 +317,9 @@ async def set_rep_areas(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Set areas for a representative (replaces existing assignments)"""
-    await verify_admin_or_manager(db, current_user.id)
+    """Set areas for a representative (replaces existing assignments);
+    needs edit on the permissions page, like the other assignment endpoints."""
+    await require_permission(db, current_user, "permissions", "edit")
     service = Representative_areasService(db)
     try:
         # Get existing assignments for this rep
