@@ -12,6 +12,7 @@ from core.database import get_db
 from dependencies.auth import get_current_user
 from models.activity_logs import Activity_logs
 from models.payments import Payments
+from models.pharmacies import Pharmacies
 from schemas.auth import UserResponse
 from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
 
@@ -66,10 +67,27 @@ async def _drop_paid_appointments(db: AsyncSession, logs):
         if key not in last_paid or created > last_paid[key]:
             last_paid[key] = created
 
+    # Payments are often saved under the customer record that carries the
+    # area suffix ("صيدلية X زيونه") while the appointment was logged on the
+    # same pharmacy without it ("صيدلية X"), so also try name + that
+    # pharmacy's own area.
+    ids = {l.pharmacy_id for l in logs if l.pharmacy_id}
+    area_by_id = {}
+    if ids:
+        area_rows = await db.execute(
+            select(Pharmacies.id, Pharmacies.area).where(Pharmacies.id.in_(ids))
+        )
+        area_by_id = {pid: (area or "").strip().lower() for pid, area in area_rows.all()}
+
     kept = []
     for log in logs:
         key = (log.pharmacy_name or "").strip().lower()
-        paid_at = last_paid.get(key)
+        keys = [key]
+        area = area_by_id.get(log.pharmacy_id)
+        if area and not key.endswith(area):
+            keys.append(f"{key} {area}")
+        paid_times = [last_paid[k] for k in keys if k in last_paid]
+        paid_at = max(paid_times) if paid_times else None
         if paid_at is not None and log.timestamp is not None and paid_at > log.timestamp:
             continue
         kept.append(log)
