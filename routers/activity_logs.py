@@ -276,8 +276,10 @@ async def query_activity_logss_all(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
     # Query activity_logss with filtering, sorting, and pagination without user limitation
+    # (any signed-in user; this used to be open to unauthenticated requests)
     logger.debug(f"Querying activity_logss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 
     service = Activity_logsService(db)
