@@ -151,14 +151,30 @@ class CustomerDebtSummary(BaseModel):
     status: str  # clean, has_debt, overdue
 
 
+async def _visible_customer_names(db: AsyncSession, current_user: UserResponse):
+    """Customer names (trimmed + lowercased) the caller may see debts for, or
+    None for everything. Same rep/manager area scoping as the debts list."""
+    scope = await get_customer_scope(db, current_user)
+    return await get_scoped_pharmacy_names(db, scope)
+
+
+async def _ensure_customer_visible(db: AsyncSession, current_user: UserResponse, customer_name: str) -> None:
+    names = await _visible_customer_names(db, current_user)
+    if names is not None and (customer_name or "").strip().lower() not in names:
+        raise HTTPException(status_code=403, detail="هذا الزبون خارج نطاق صلاحياتك")
+
+
 @router.get("/customer-summary/{customer_name}", response_model=CustomerDebtSummary)
 async def get_customer_debt_summary(
     customer_name: str,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Get debt summary for a specific customer name"""
+    """Get debt summary for a specific customer name (customers outside the
+    caller's rep/manager scope are refused)."""
     from sqlalchemy import select, func
+
+    await _ensure_customer_visible(db, current_user, customer_name)
 
     # Get counts by status
     result = await db.execute(
@@ -201,10 +217,12 @@ async def get_all_customer_summaries(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Get debt summaries for all customers that have any debts"""
-    from sqlalchemy import select, func
+    """Get debt summaries for all customers that have any debts — only the
+    caller's own scope for a rep/manager (their areas / their reps' customers),
+    everything for admin/accounting and the other roles."""
+    from sqlalchemy import select, func, false
 
-    result = await db.execute(
+    query = (
         select(
             Debts.customer_name,
             func.count(Debts.id).label("total"),
@@ -217,6 +235,13 @@ async def get_all_customer_summaries(
         .group_by(Debts.customer_name)
         .order_by(Debts.customer_name)
     )
+    scoped_names = await _visible_customer_names(db, current_user)
+    if scoped_names is not None:
+        if scoped_names:
+            query = query.where(func.lower(func.trim(Debts.customer_name)).in_(scoped_names))
+        else:
+            query = query.where(false())
+    result = await db.execute(query)
     rows = result.all()
 
     summaries = []
@@ -306,7 +331,8 @@ async def get_unpaid_debts(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Get all unpaid/partial debts for a customer"""
+    """Get all unpaid/partial debts for a customer (within the caller's scope)"""
+    await _ensure_customer_visible(db, current_user, customer_name)
     service = DebtsService(db)
     return await service.get_unpaid_by_customer(customer_name)
 
@@ -718,11 +744,21 @@ async def list_payments(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """List payment transactions"""
-    from sqlalchemy import select, func
+    """List payment transactions — only those of the caller's own customers
+    for a rep/manager (same scope as the debts list)."""
+    from sqlalchemy import select, func, false
 
     query = select(Payments)
     count_query = select(func.count(Payments.id))
+
+    scoped_names = await _visible_customer_names(db, current_user)
+    if scoped_names is not None:
+        if scoped_names:
+            in_scope = func.lower(func.trim(Payments.customer_name)).in_(scoped_names)
+        else:
+            in_scope = false()
+        query = query.where(in_scope)
+        count_query = count_query.where(in_scope)
 
     if customer_name:
         query = query.where(Payments.customer_name == customer_name)
@@ -750,8 +786,13 @@ async def get_handover_summary(
     can see whether it's a full or partial settlement of a specific invoice
     (or an unallocated manual payment, if the list is empty)."""
     from sqlalchemy import select
+    from services.access import visible_user_ids
 
-    result = await db.execute(select(Payments).order_by(Payments.created_at.desc()))
+    handover_query = select(Payments).order_by(Payments.created_at.desc())
+    visible_users = await visible_user_ids(db, current_user)
+    if visible_users is not None:
+        handover_query = handover_query.where(Payments.user_id.in_(visible_users))
+    result = await db.execute(handover_query)
     all_payments = result.scalars().all()
 
     pending_ids = [p.id for p in all_payments if p.status != "canceled" and not p.handed_over]
