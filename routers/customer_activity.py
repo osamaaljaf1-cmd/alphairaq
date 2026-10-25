@@ -17,7 +17,7 @@ from models.returns import Returns
 from models.debts import Debts
 from models.pharmacies import Pharmacies
 from models.doctors import Doctors
-from models.items import Products
+from models.products import Products
 from models.representatives import Representatives
 
 logger = logging.getLogger(__name__)
