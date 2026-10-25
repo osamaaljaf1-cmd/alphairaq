@@ -1,6 +1,8 @@
 import io
 import logging
+import math
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -448,15 +450,52 @@ async def download_template():
         )
 
 
+def _clean_cell(raw) -> str:
+    """Excel cell -> trimmed text. Empty / NaN becomes '' (not the string 'nan'),
+    and a whole-number float loses the '.0' pandas adds when the column has a
+    blank cell (82907.0 -> 82907)."""
+    if raw is None:
+        return ""
+    try:
+        if pd.isna(raw):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    if isinstance(raw, float) and raw.is_integer():
+        raw = int(raw)
+    text = str(raw).strip()
+    return "" if text.lower() == "nan" else text
+
+
+def _invoice_key(value: str) -> str:
+    """Comparison key for an invoice number: trimmed, lower-cased, without a
+    trailing '.0' and, for all-digit numbers, without leading zeros (so '82907',
+    ' 82907 ', '82907.0', '082907' and 'INV-1'/'inv-1' all match)."""
+    key = (value or "").strip().lower()
+    if re.fullmatch(r"\d+\.0", key):
+        key = key[:-2]
+    if key.isdigit():
+        key = key.lstrip("0") or "0"  # Excel drops leading zeros: 082907 == 82907
+    return key
+
+
 @router.post("", response_model=DebtResponse, status_code=201)
 async def create_debt(
     data: DebtData,
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Create a single debt record"""
+    """Create a single debt record (needs add on the debts page)"""
+    from sqlalchemy import select
+
+    await require_permission(db, current_user, "debts", "add")
     service = DebtsService(db)
-    existing = await service.get_by_invoice_number(data.invoice_number)
+    key = _invoice_key(data.invoice_number)
+    normalized = func.lower(func.trim(Debts.invoice_number))
+    same = normalized.in_([key, f"{key}.0"])
+    if key.isdigit():
+        same = or_(same, func.ltrim(normalized, "0").in_([key, f"{key}.0"]))
+    existing = (await db.execute(select(Debts.id).where(same))).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"رقم القائمة {data.invoice_number} موجود مسبقاً")
 
@@ -504,9 +543,18 @@ async def import_excel(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Import debts from Excel file.
+    """Import debts from Excel file (needs add on the debts page).
     Expected columns: اسم الزبون, رقم القائمة, مبلغ الدين, تاريخ القائمة
+
+    An invoice number that already exists (ignoring case, spaces and a
+    trailing '.0') is skipped and reported — it is never added to the
+    customer's balance a second time, whether it is unpaid, partly paid or
+    already settled, and whether the repeat is in the database or inside
+    the same file.
     """
+    from sqlalchemy import select
+
+    await require_permission(db, current_user, "debts", "add")
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="يرجى رفع ملف Excel (.xlsx أو .xls)")
 
@@ -541,12 +589,13 @@ async def import_excel(
     imported = 0
     skipped = 0
     errors: List[str] = []
+    seen_invoices = {_invoice_key(inv) for (inv,) in (await db.execute(select(Debts.invoice_number))).all()}
 
     for idx, row in df.iterrows():
         row_num = idx + 2  # Excel row (1-indexed + header)
         try:
-            customer_name = str(row.get("customer_name", "")).strip()
-            invoice_number = str(row.get("invoice_number", "")).strip()
+            customer_name = _clean_cell(row.get("customer_name"))
+            invoice_number = _clean_cell(row.get("invoice_number"))
             amount_raw = row.get("amount", 0)
 
             if not customer_name or not invoice_number:
@@ -561,14 +610,13 @@ async def import_excel(
                 skipped += 1
                 continue
 
-            if amount <= 0:
+            if math.isnan(amount) or amount <= 0:
                 errors.append(f"صف {row_num}: مبلغ الدين يجب أن يكون أكبر من صفر")
                 skipped += 1
                 continue
 
             # Check for duplicate invoice number
-            existing = await service.get_by_invoice_number(invoice_number)
-            if existing:
+            if _invoice_key(invoice_number) in seen_invoices:
                 errors.append(f"صف {row_num}: رقم القائمة {invoice_number} موجود مسبقاً - تم تخطيه")
                 skipped += 1
                 continue
@@ -593,6 +641,7 @@ async def import_excel(
                 },
                 user_id=str(current_user.id),
             )
+            seen_invoices.add(_invoice_key(invoice_number))
             imported += 1
 
         except Exception as e:
