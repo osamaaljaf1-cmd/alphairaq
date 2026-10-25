@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime
+from datetime import date as date_type, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -39,7 +39,7 @@ class ActivityEvent(BaseModel):
     reference: Optional[str] = None  # invoice number for debts
     remaining_amount: Optional[float] = None
     visit_type: Optional[str] = None
-    collection_date: Optional[date] = None
+    collection_date: Optional[date_type] = None
 
     class Config:
         from_attributes = True
