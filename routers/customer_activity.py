@@ -1,16 +1,18 @@
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from models.activity_logs import Activity_logs
 from models.orders import Orders
+from models.payments import Payments
 from models.returns import Returns
 from models.debts import Debts
 from models.pharmacies import Pharmacies
@@ -24,7 +26,7 @@ router = APIRouter(prefix="/api/v1/customer-activity", tags=["customer-activity"
 
 
 class ActivityEvent(BaseModel):
-    type: str  # "sale" | "return"
+    type: str  # "sale" | "return" | "payment" | "debt" | "visit" | "appointment"
     id: int
     date: Optional[datetime] = None
     status: Optional[str] = None
@@ -34,6 +36,10 @@ class ActivityEvent(BaseModel):
     quantity: Optional[int] = None
     reason: Optional[str] = None
     notes: Optional[str] = None
+    reference: Optional[str] = None  # invoice number for debts
+    remaining_amount: Optional[float] = None
+    visit_type: Optional[str] = None
+    collection_date: Optional[date] = None
 
     class Config:
         from_attributes = True
@@ -56,7 +62,7 @@ async def _debt_summary(db: AsyncSession, customer_name: str) -> DebtSummary:
         select(
             func.coalesce(func.sum(Debts.remaining_amount), 0.0),
             func.count(Debts.id).filter(Debts.status != "paid"),
-        ).where(Debts.customer_name == customer_name)
+        ).where(func.lower(func.trim(Debts.customer_name)) == customer_name.strip().lower())
     )
     total_remaining, unpaid_count = result.one()
     total_remaining = float(total_remaining or 0)
@@ -67,23 +73,51 @@ async def _debt_summary(db: AsyncSession, customer_name: str) -> DebtSummary:
     )
 
 
+def _sort_key(e: "ActivityEvent") -> float:
+    return e.date.timestamp() if e.date else 0.0
+
+
 async def _build_timeline(
-    db: AsyncSession, pharmacy_id: Optional[int] = None, doctor_id: Optional[int] = None
+    db: AsyncSession,
+    customer_name: str,
+    pharmacy_id: Optional[int] = None,
+    doctor_id: Optional[int] = None,
 ) -> List[ActivityEvent]:
+    """Everything recorded against one customer: sales, returns, payments,
+    debt invoices, visit reports and collection appointments."""
     order_q = select(Orders)
     return_q = select(Returns)
     if pharmacy_id is not None:
         order_q = order_q.where(Orders.pharmacy_id == pharmacy_id)
         return_q = return_q.where(Returns.pharmacy_id == pharmacy_id)
+        log_q = select(Activity_logs).where(
+            Activity_logs.type == "pharmacy_visit",
+            or_(
+                Activity_logs.pharmacy_id == pharmacy_id,
+                func.lower(func.trim(Activity_logs.pharmacy_name)) == customer_name.strip().lower(),
+            ),
+        )
     else:
         order_q = order_q.where(Orders.doctor_id == doctor_id)
         return_q = return_q.where(Returns.doctor_id == doctor_id)
+        log_q = select(Activity_logs).where(
+            Activity_logs.type == "doctor_visit",
+            Activity_logs.doctor_id == doctor_id,
+        )
+
+    name_key = customer_name.strip().lower()
+    payment_q = select(Payments).where(func.lower(func.trim(Payments.customer_name)) == name_key)
+    debt_q = select(Debts).where(func.lower(func.trim(Debts.customer_name)) == name_key)
 
     orders = (await db.execute(order_q.order_by(Orders.created_at.desc()).limit(300))).scalars().all()
     returns = (await db.execute(return_q.order_by(Returns.created_at.desc()).limit(300))).scalars().all()
+    logs = (await db.execute(log_q.order_by(Activity_logs.timestamp.desc()).limit(300))).scalars().all()
+    payments = (await db.execute(payment_q.order_by(Payments.created_at.desc()).limit(300))).scalars().all()
+    debts = (await db.execute(debt_q.order_by(Debts.created_at.desc()).limit(300))).scalars().all()
 
     rep_ids = {o.representative_id for o in orders if o.representative_id}
     rep_ids |= {r.representative_id for r in returns if r.representative_id}
+    rep_ids |= {l.rep_id for l in logs if l.rep_id}
     rep_map = {}
     if rep_ids:
         rep_result = await db.execute(select(Representatives).where(Representatives.id.in_(rep_ids)))
@@ -117,8 +151,40 @@ async def _build_timeline(
             quantity=r.quantity,
             reason=r.reason,
         ))
+    for p in payments:
+        events.append(ActivityEvent(
+            type="payment",
+            id=p.id,
+            date=p.created_at,
+            status="canceled" if p.status == "canceled" else "active",
+            amount=p.net_received,
+            rep_name=p.rep_name,
+            notes=p.notes,
+        ))
+    for d in debts:
+        events.append(ActivityEvent(
+            type="debt",
+            id=d.id,
+            date=d.created_at,
+            status=d.status,
+            amount=d.amount,
+            remaining_amount=d.remaining_amount,
+            reference=d.invoice_number,
+            notes=d.notes,
+        ))
+    for l in logs:
+        is_appointment = l.visit_type == "debt_follow_up" and l.collection_date is not None
+        events.append(ActivityEvent(
+            type="appointment" if is_appointment else "visit",
+            id=l.id,
+            date=l.timestamp,
+            rep_name=rep_map.get(l.rep_id),
+            notes=l.details,
+            visit_type=l.visit_type,
+            collection_date=l.collection_date,
+        ))
 
-    events.sort(key=lambda e: e.date or datetime.min, reverse=True)
+    events.sort(key=_sort_key, reverse=True)
     return events
 
 
@@ -128,13 +194,14 @@ async def get_pharmacy_activity(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Chronological sales + returns timeline for one pharmacy, with its current debt total."""
+    """Chronological timeline for one pharmacy (sales, returns, payments, debts, visit reports,
+    collection appointments), with its current debt total."""
     result = await db.execute(select(Pharmacies).where(Pharmacies.id == pharmacy_id))
     pharmacy = result.scalar_one_or_none()
     if not pharmacy:
         raise HTTPException(status_code=404, detail="الصيدلية غير موجودة")
 
-    events = await _build_timeline(db, pharmacy_id=pharmacy_id)
+    events = await _build_timeline(db, pharmacy.name, pharmacy_id=pharmacy_id)
     debt = await _debt_summary(db, pharmacy.name)
     return CustomerActivityResponse(customer_name=pharmacy.name, debt_summary=debt, events=events)
 
@@ -145,12 +212,13 @@ async def get_doctor_activity(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Chronological sales + returns timeline for one doctor, with its current debt total."""
+    """Chronological timeline for one doctor (sales, returns, payments, debts, visit reports),
+    with its current debt total."""
     result = await db.execute(select(Doctors).where(Doctors.id == doctor_id))
     doctor = result.scalar_one_or_none()
     if not doctor:
         raise HTTPException(status_code=404, detail="الطبيب غير موجود")
 
-    events = await _build_timeline(db, doctor_id=doctor_id)
+    events = await _build_timeline(db, doctor.name, doctor_id=doctor_id)
     debt = await _debt_summary(db, doctor.name)
     return CustomerActivityResponse(customer_name=doctor.name, debt_summary=debt, events=events)
