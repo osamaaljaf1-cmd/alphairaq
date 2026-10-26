@@ -318,8 +318,8 @@ async def set_rep_areas(
     current_user: UserResponse = Depends(get_current_user),
 ):
     """Set areas for a representative (replaces existing assignments);
-    needs edit on the permissions page, like the other assignment endpoints."""
-    await require_permission(db, current_user, "permissions", "edit")
+    needs edit on the rep-areas page."""
+    await require_permission(db, current_user, "rep_areas", "edit")
     service = Representative_areasService(db)
     try:
         # Get existing assignments for this rep

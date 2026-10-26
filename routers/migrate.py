@@ -266,8 +266,12 @@ _SEED_PAGES = (
     "dashboard", "orders", "returns", "agreements", "target", "customers",
     "items", "map", "chat", "admin_users", "permissions", "areas",
     "rep_operations", "doctor_visits", "pharmacy_visits", "debts",
-    "rep_activity_map",
+    "rep_activity_map", "rep_areas",
 )
+
+# A newly added page starts out with the same rights each role already has on
+# another page, so nobody loses access they had before the page was split off.
+_INHERIT_FROM = {"rep_areas": "permissions"}
 
 # Pages that should have can_view=True for ALL roles by default
 _DEFAULT_VIEW_ALL_PAGES = frozenset({"doctor_visits", "pharmacy_visits"})
@@ -300,15 +304,31 @@ async def seed_permissions(
     except Exception:
         pass  # custom_roles table not migrated yet on this environment
 
-    existing_result = await db.execute(text("SELECT role, page FROM permissions"))
-    existing_pairs = {(row[0], row[1]) for row in existing_result.fetchall()}
+    existing_result = await db.execute(
+        text("SELECT role, page, can_view, can_add, can_edit, can_delete, can_import, can_export FROM permissions")
+    )
+    existing_rows = existing_result.fetchall()
+    existing_pairs = {(row[0], row[1]) for row in existing_rows}
+    flags_by_pair = {
+        (row[0], row[1]): {
+            "can_view": bool(row[2]), "can_add": bool(row[3]), "can_edit": bool(row[4]),
+            "can_delete": bool(row[5]), "can_import": bool(row[6]), "can_export": bool(row[7]),
+        }
+        for row in existing_rows
+    }
+
+    def _defaults(role: str, page: str) -> dict:
+        inherited = flags_by_pair.get((role, _INHERIT_FROM.get(page, "")))
+        if inherited is not None:
+            return dict(inherited)
+        return {
+            "can_view": role == "admin" or page in _DEFAULT_VIEW_ALL_PAGES,
+            "can_add": False, "can_edit": False, "can_delete": False,
+            "can_import": False, "can_export": False,
+        }
 
     to_insert = [
-        {
-            "role": role,
-            "page": page,
-            "can_view": role == "admin" or page in _DEFAULT_VIEW_ALL_PAGES,
-        }
+        {"role": role, "page": page, **_defaults(role, page)}
         for role in all_roles
         for page in _SEED_PAGES
         if (role, page) not in existing_pairs
@@ -319,7 +339,7 @@ async def seed_permissions(
             await db.execute(
                 text(
                     "INSERT INTO permissions (role, page, can_view, can_add, can_edit, can_delete, can_import, can_export) "
-                    "VALUES (:role, :page, :can_view, false, false, false, false, false)"
+                    "VALUES (:role, :page, :can_view, :can_add, :can_edit, :can_delete, :can_import, :can_export)"
                 ),
                 to_insert,
             )

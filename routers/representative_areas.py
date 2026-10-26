@@ -179,7 +179,7 @@ async def create_representative_areas(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    await require_permission(db, current_user, "permissions", "edit")
+    await require_permission(db, current_user, "rep_areas", "edit")
     """Create a new representative_areas"""
     logger.debug(f"Creating new representative_areas with data: {data}")
     
@@ -205,7 +205,7 @@ async def create_representative_areass_batch(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    await require_permission(db, current_user, "permissions", "edit")
+    await require_permission(db, current_user, "rep_areas", "edit")
     """Create multiple representative_areass in a single request"""
     logger.debug(f"Batch creating {len(request.items)} representative_areass")
     
@@ -232,7 +232,7 @@ async def update_representative_areass_batch(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    await require_permission(db, current_user, "permissions", "edit")
+    await require_permission(db, current_user, "rep_areas", "edit")
     """Update multiple representative_areass in a single request"""
     logger.debug(f"Batch updating {len(request.items)} representative_areass")
     
@@ -262,7 +262,7 @@ async def update_representative_areas(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    await require_permission(db, current_user, "permissions", "edit")
+    await require_permission(db, current_user, "rep_areas", "edit")
     """Update an existing representative_areas"""
     logger.debug(f"Updating representative_areas {id} with data: {data}")
 
@@ -293,7 +293,7 @@ async def delete_representative_areass_batch(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    await require_permission(db, current_user, "permissions", "edit")
+    await require_permission(db, current_user, "rep_areas", "edit")
     """Delete multiple representative_areass by their IDs"""
     logger.debug(f"Batch deleting {len(request.ids)} representative_areass")
     
@@ -320,7 +320,7 @@ async def delete_representative_areas(
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
-    await require_permission(db, current_user, "permissions", "edit")
+    await require_permission(db, current_user, "rep_areas", "edit")
     """Delete a single representative_areas by ID"""
     logger.debug(f"Deleting representative_areas with id: {id}")
     
