@@ -110,6 +110,14 @@ async def get_customer_scope(db: AsyncSession, current_user: UserResponse) -> Cu
     return CustomerScope(unrestricted=False, area_ids=area_ids, rep_ids=assigned_rep_ids)
 
 
+async def get_rep_scope(db: AsyncSession, rep_id: int) -> CustomerScope:
+    """The customer scope of one specific representative: their assigned areas
+    (expanded to descendants) plus the customers assigned to them directly —
+    the same rule a rep's own login is restricted to."""
+    area_ids = await _areas_for_reps(db, [rep_id])
+    return CustomerScope(unrestricted=False, area_ids=area_ids, rep_ids=[rep_id])
+
+
 async def get_scoped_pharmacy_names(db: AsyncSession, scope: "CustomerScope") -> Optional[set[str]]:
     """Resolve the pharmacy names (trimmed + lowercased) visible under this
     scope, for matching against free-text fields that store a customer name

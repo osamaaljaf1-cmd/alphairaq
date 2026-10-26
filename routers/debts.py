@@ -23,7 +23,7 @@ from models.payment_handovers import PaymentHandovers
 from schemas.auth import UserResponse
 from services.debts import DebtsService
 from services.permission_check import require_permission, resolve_user_role
-from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
+from services.area_scope import get_customer_scope, get_rep_scope, get_scoped_pharmacy_names
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +186,20 @@ async def _visible_customer_names(db: AsyncSession, current_user: UserResponse):
     return await get_scoped_pharmacy_names(db, scope)
 
 
+async def _names_for_request(db: AsyncSession, current_user: UserResponse, rep_id: Optional[int]):
+    """Customer names the caller may list. Without ``rep_id`` that is the
+    caller's own scope. With ``rep_id`` it is that one representative's scope
+    (their areas + customers) — allowed for admin/accounting and other
+    unrestricted roles, for a manager only on their own reps, and for a rep
+    only on themself."""
+    caller = await get_customer_scope(db, current_user)
+    if rep_id is None:
+        return await get_scoped_pharmacy_names(db, caller)
+    if not caller.unrestricted and rep_id not in caller.rep_ids:
+        raise HTTPException(status_code=403, detail="هذا المندوب خارج نطاق صلاحياتك")
+    return await get_scoped_pharmacy_names(db, await get_rep_scope(db, rep_id))
+
+
 async def _ensure_customer_visible(db: AsyncSession, current_user: UserResponse, customer_name: str) -> None:
     names = await _visible_customer_names(db, current_user)
     if names is not None and (customer_name or "").strip().lower() not in names:
@@ -307,6 +321,7 @@ async def list_debts(
     sort: str = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=2000),
+    rep_id: Optional[int] = Query(None, description="Only this representative's customers (areas + assigned)"),
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
@@ -325,8 +340,7 @@ async def list_debts(
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid query JSON")
 
-    scope = await get_customer_scope(db, current_user)
-    scoped_names = await get_scoped_pharmacy_names(db, scope)
+    scoped_names = await _names_for_request(db, current_user, rep_id)
 
     result = await service.get_list(
         skip=skip,
@@ -342,14 +356,14 @@ async def list_debts(
 @router.get("/customers", response_model=List[str])
 async def get_customer_names(
     customer_search: str = Query(None, description="Partial, case-insensitive search on customer name"),
+    rep_id: Optional[int] = Query(None, description="Only this representative's customers"),
     db: AsyncSession = Depends(get_db),
     current_user: UserResponse = Depends(get_current_user),
 ):
     """Get distinct customer names with debts, scoped the same way as the
     debts list itself (see list_debts)."""
     service = DebtsService(db)
-    scope = await get_customer_scope(db, current_user)
-    scoped_names = await get_scoped_pharmacy_names(db, scope)
+    scoped_names = await _names_for_request(db, current_user, rep_id)
     return await service.get_customer_names(customer_search=customer_search, scoped_names=scoped_names)
 
 
