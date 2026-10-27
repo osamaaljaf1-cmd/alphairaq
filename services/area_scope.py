@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from fastapi import HTTPException
 from sqlalchemy import or_, false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +11,7 @@ from models.user_assignments import User_assignments
 from models.areas import Areas
 from models.pharmacies import Pharmacies
 from schemas.auth import UserResponse
+from services.customer_names import clean_name, normalize_name
 from services.customer_names import normalize_name
 
 logger = logging.getLogger(__name__)
@@ -109,6 +111,42 @@ async def get_customer_scope(db: AsyncSession, current_user: UserResponse) -> Cu
 
     area_ids = await _areas_for_reps(db, assigned_rep_ids)
     return CustomerScope(unrestricted=False, area_ids=area_ids, rep_ids=assigned_rep_ids)
+
+
+async def area_ids_by_name(db: AsyncSession) -> dict[str, int]:
+    """Real areas keyed by normalized name (case and spacing ignored)."""
+    rows = (await db.execute(select(Areas.id, Areas.name).order_by(Areas.id))).all()
+    known: dict[str, int] = {}
+    for area_id, name in rows:
+        known.setdefault(normalize_name(name), area_id)
+    return known
+
+
+async def link_area(db: AsyncSession, data: dict, known: Optional[dict[str, int]] = None) -> None:
+    """Link a customer to its real area. Visibility by area works on ``area_id``,
+    so a customer saved with only an area *name* (Excel import, a client that
+    sends the text alone) would never show up for the rep of that area. The id is
+    looked up by name; a name that is not an area yet is created, the same as the
+    customer form does. Does nothing when an id is already given or there is no
+    name."""
+    name = clean_name(data.get("area"))
+    if data.get("area_id") is not None or not name:
+        return
+    known = known if known is not None else await area_ids_by_name(db)
+    key = normalize_name(name)
+    if key not in known:
+        area = Areas(name=name)
+        db.add(area)
+        await db.flush()
+        known[key] = area.id
+    data["area_id"] = known[key]
+
+
+def require_area(data: dict) -> None:
+    """A customer added by hand must belong to an area — visibility by area
+    depends on it. Call after link_area (which turns the name into an id)."""
+    if data.get("area_id") is None:
+        raise HTTPException(status_code=400, detail="المنطقة مطلوبة — اختر منطقة للزبون")
 
 
 async def get_rep_scope(db: AsyncSession, rep_id: int) -> CustomerScope:

@@ -1,13 +1,23 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select, func, false
+from sqlalchemy import select, func, false, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.debts import Debts
 from services.customer_names import name_sql, normalize_name
 
 logger = logging.getLogger(__name__)
+
+
+def _search_filter(term: str):
+    """Match a customer by name OR by one of its invoice numbers: a customer is
+    kept when its name contains the text, or when any of its debts has an
+    invoice number containing it (all of that customer's debts then show, not
+    only the matching invoice)."""
+    pattern = f"%{term.strip()}%"
+    with_invoice = select(Debts.customer_name).where(Debts.invoice_number.ilike(pattern))
+    return or_(Debts.customer_name.ilike(pattern), Debts.customer_name.in_(with_invoice))
 
 
 class DebtsService:
@@ -73,8 +83,9 @@ class DebtsService:
         scoped_names: Optional[set[str]] = None,
     ) -> Dict[str, Any]:
         """
-        customer_search: partial, case-insensitive match on customer_name
-            (the free-text "type to search" filter on the Debts page).
+        customer_search: partial, case-insensitive match on customer_name or on
+            an invoice number (the free-text "type to search" filter on the
+            Debts page).
         scoped_names: pharmacy names (trimmed+lowercased) the caller is
             restricted to (see services/area_scope.get_scoped_pharmacy_names).
             None = unrestricted; an empty set = restricted with nothing in
@@ -91,9 +102,8 @@ class DebtsService:
                         count_query = count_query.where(getattr(Debts, field) == value)
 
             if customer_search:
-                pattern = f"%{customer_search.strip()}%"
-                query = query.where(Debts.customer_name.ilike(pattern))
-                count_query = count_query.where(Debts.customer_name.ilike(pattern))
+                query = query.where(_search_filter(customer_search))
+                count_query = count_query.where(_search_filter(customer_search))
 
             if scoped_names is not None:
                 if not scoped_names:
@@ -138,7 +148,7 @@ class DebtsService:
             query = select(Debts.customer_name).distinct()
 
             if customer_search:
-                query = query.where(Debts.customer_name.ilike(f"%{customer_search.strip()}%"))
+                query = query.where(_search_filter(customer_search))
 
             if scoped_names is not None:
                 if not scoped_names:

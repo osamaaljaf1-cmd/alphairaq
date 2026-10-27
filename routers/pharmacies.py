@@ -14,7 +14,7 @@ from schemas.auth import UserResponse
 from models.pharmacies import Pharmacies
 from services.pharmacies import PharmaciesService
 from services.doctors import DoctorsService
-from services.area_scope import get_customer_scope
+from services.area_scope import area_ids_by_name, get_customer_scope, link_area, require_area
 from services.permission_check import require_permission
 from services.customer_names import are_similar, clean_name, normalize_name, pharmacy_index
 
@@ -226,6 +226,45 @@ async def get_near_pharmacies(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@router.post("/link-areas")
+async def link_customers_to_areas(
+    dry_run: bool = Query(True, description="Only count what would be linked"),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """One-off clean-up (admin): link every pharmacy and doctor that has an
+    area *name* but no area id to its real area, creating areas that do not
+    exist yet. Nothing is written unless ``dry_run=false``."""
+    from models.doctors import Doctors
+    from services.access import require_admin
+
+    await require_permission(db, current_user, "customers", "edit")
+    await require_admin(db, current_user)
+
+    known = await area_ids_by_name(db)
+    missing_areas: set[str] = set()
+    result = {}
+    for label, model in (("pharmacies", Pharmacies), ("doctors", Doctors)):
+        rows = (
+            await db.execute(select(model).where(model.area_id.is_(None), model.area.is_not(None)))
+        ).scalars().all()
+        linked = 0
+        for row in rows:
+            if not clean_name(row.area):
+                continue
+            if normalize_name(row.area) not in known:
+                missing_areas.add(clean_name(row.area))
+            linked += 1
+            if not dry_run:
+                data = {"area": row.area, "area_id": None}
+                await link_area(db, data, known)
+                row.area_id = data["area_id"]
+        result[label] = linked
+    if not dry_run:
+        await db.commit()
+    return {"dry_run": dry_run, "linked": result, "areas_to_create" if dry_run else "areas_created": len(missing_areas)}
+
+
 @router.get("/{id}", response_model=PharmaciesResponse)
 async def get_pharmacies(
     id: int,
@@ -269,6 +308,9 @@ async def _clean_name_on_update(db: AsyncSession, pharmacy_id: int, update_dict:
     """Clean the spacing of a name being saved. The similarity check only runs
     when the name really changes, so editing another field of a customer that
     already has a look-alike is not blocked."""
+    if "area" in update_dict and not clean_name(update_dict["area"]):
+        raise HTTPException(status_code=400, detail="المنطقة مطلوبة — اختر منطقة للزبون")
+    await link_area(db, update_dict)
     if "name" not in update_dict:
         return
     current = (await db.execute(select(Pharmacies.name).where(Pharmacies.id == pharmacy_id))).scalar_one_or_none()
@@ -296,6 +338,8 @@ async def create_pharmacies(
     try:
         create_data = data.model_dump()
         create_data["name"] = await _checked_name(db, data.name)
+        await link_area(db, create_data)
+        require_area(create_data)
         if create_data.get("credit_limit") is None:
             create_data["credit_limit"] = 1_000_000
 
@@ -335,6 +379,7 @@ async def create_pharmaciess_batch(
 
     try:
         index = await pharmacy_index(db)
+        known_areas = await area_ids_by_name(db)
 
         new_objs: List[Pharmacies] = []
         skipped = 0
@@ -348,6 +393,7 @@ async def create_pharmaciess_batch(
                 skipped += 1
                 continue
             data["name"] = cleaned
+            await link_area(db, data, known_areas)
             if data.get("credit_limit") is None:
                 data["credit_limit"] = 1_000_000
             index.add(cleaned)

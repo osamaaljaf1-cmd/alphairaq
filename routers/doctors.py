@@ -13,7 +13,7 @@ from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.doctors import Doctors
 from services.doctors import DoctorsService
-from services.area_scope import get_customer_scope
+from services.area_scope import area_ids_by_name, get_customer_scope, link_area, require_area
 from services.permission_check import require_permission
 
 # Set up logging
@@ -227,7 +227,10 @@ async def create_doctors(
             if dup_check.scalar_one_or_none():
                 raise HTTPException(status_code=400, detail="يوجد طبيب بنفس الاسم مسبقاً")
 
-        result = await service.create(data.model_dump())
+        create_data = data.model_dump()
+        await link_area(db, create_data)
+        require_area(create_data)
+        result = await service.create(create_data)
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create doctors")
         
@@ -266,6 +269,7 @@ async def create_doctorss_batch(
         existing_names = {row[0] for row in existing_result.all() if row[0]}
 
         seen_in_batch: set[str] = set()
+        known_areas = await area_ids_by_name(db)
         new_objs: List[Doctors] = []
         skipped = 0
 
@@ -276,6 +280,7 @@ async def create_doctorss_batch(
                 skipped += 1
                 continue
             seen_in_batch.add(normalized)
+            await link_area(db, data, known_areas)
             new_objs.append(Doctors(**data))
 
         db.add_all(new_objs)
@@ -309,6 +314,7 @@ async def update_doctorss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
+            await link_area(db, update_dict)
             result = await service.update(item.id, update_dict)
             if result:
                 results.append(result)
@@ -337,6 +343,9 @@ async def update_doctors(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
+        if "area" in update_dict and not (update_dict["area"] or "").strip():
+            raise HTTPException(status_code=400, detail="المنطقة مطلوبة — اختر منطقة للزبون")
+        await link_area(db, update_dict)
         result = await service.update(id, update_dict)
         if not result:
             logger.warning(f"Doctors with id {id} not found for update")
