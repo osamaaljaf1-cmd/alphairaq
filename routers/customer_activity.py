@@ -21,6 +21,7 @@ from models.products import Products
 from models.representatives import Representatives
 from services.access import require_view_any
 from services.area_scope import get_customer_scope
+from services.customer_names import name_sql, normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ async def _debt_summary(db: AsyncSession, customer_name: str) -> DebtSummary:
         select(
             func.coalesce(func.sum(Debts.remaining_amount), 0.0),
             func.count(Debts.id).filter(Debts.status != "paid"),
-        ).where(func.lower(func.trim(Debts.customer_name)) == customer_name.strip().lower())
+        ).where(name_sql(Debts.customer_name) == normalize_name(customer_name))
     )
     total_remaining, unpaid_count = result.one()
     total_remaining = float(total_remaining or 0)
@@ -120,9 +121,9 @@ async def _build_timeline(
             Activity_logs.doctor_id == doctor_id,
         )
 
-    name_key = customer_name.strip().lower()
-    payment_q = select(Payments).where(func.lower(func.trim(Payments.customer_name)) == name_key)
-    debt_q = select(Debts).where(func.lower(func.trim(Debts.customer_name)) == name_key)
+    name_key = normalize_name(customer_name)
+    payment_q = select(Payments).where(name_sql(Payments.customer_name) == name_key)
+    debt_q = select(Debts).where(name_sql(Debts.customer_name) == name_key)
 
     orders = (await db.execute(order_q.order_by(Orders.created_at.desc()).limit(300))).scalars().all()
     returns = (await db.execute(return_q.order_by(Returns.created_at.desc()).limit(300))).scalars().all()

@@ -24,6 +24,7 @@ from schemas.auth import UserResponse
 from services.debts import DebtsService
 from services.permission_check import require_permission, resolve_user_role
 from services.area_scope import get_customer_scope, get_rep_scope, get_scoped_pharmacy_names
+from services.customer_names import PharmacyIndex, name_sql, normalize_name, pharmacy_index
 
 logger = logging.getLogger(__name__)
 
@@ -160,11 +161,22 @@ class PaymentListResponse(BaseModel):
     limit: int
 
 
+class RejectedRow(BaseModel):
+    row: int  # Excel row number
+    customer_name: str = ""
+    invoice_number: str = ""
+    amount: str = ""
+    invoice_date: str = ""
+    reason: str
+    similar: str = ""  # registered customer(s) with a similar name, to correct the file
+
+
 class ImportResult(BaseModel):
     total_rows: int
     imported: int
     skipped: int
     errors: List[str]
+    rejected: List[RejectedRow] = []  # every row that was not imported, with its reason
 
 
 # ---------- Customer Debt Summary ----------
@@ -200,9 +212,15 @@ async def _names_for_request(db: AsyncSession, current_user: UserResponse, rep_i
     return await get_scoped_pharmacy_names(db, await get_rep_scope(db, rep_id))
 
 
+def _unknown_customer_detail(index: PharmacyIndex, name: str) -> str:
+    similar = index.similar(name)
+    hint = f" — الاسم المسجّل المشابه: {'، '.join(similar[:3])}" if similar else ""
+    return f"الزبون «{name}» غير موجود في قائمة الزبائن{hint}"
+
+
 async def _ensure_customer_visible(db: AsyncSession, current_user: UserResponse, customer_name: str) -> None:
     names = await _visible_customer_names(db, current_user)
-    if names is not None and (customer_name or "").strip().lower() not in names:
+    if names is not None and normalize_name(customer_name) not in names:
         raise HTTPException(status_code=403, detail="هذا الزبون خارج نطاق صلاحياتك")
 
 
@@ -227,7 +245,7 @@ async def get_customer_debt_summary(
             func.count(Debts.id).filter(Debts.status == "unpaid").label("unpaid_count"),
             func.count(Debts.id).filter(Debts.status == "partial").label("partial_count"),
             func.count(Debts.id).filter(Debts.status == "paid").label("paid_count"),
-        ).where(Debts.customer_name == customer_name)
+        ).where(name_sql(Debts.customer_name) == normalize_name(customer_name))
     )
     row = result.one()
 
@@ -280,7 +298,7 @@ async def get_all_customer_summaries(
     scoped_names = await _visible_customer_names(db, current_user)
     if scoped_names is not None:
         if scoped_names:
-            query = query.where(func.lower(func.trim(Debts.customer_name)).in_(scoped_names))
+            query = query.where(name_sql(Debts.customer_name).in_(scoped_names))
         else:
             query = query.where(false())
     result = await db.execute(query)
@@ -513,7 +531,12 @@ async def create_debt(
     if existing:
         raise HTTPException(status_code=400, detail=f"رقم القائمة {data.invoice_number} موجود مسبقاً")
 
-    result = await service.create(data.model_dump(), user_id=str(current_user.id))
+    payload = data.model_dump()
+    registered = (await pharmacy_index(db)).registered(payload["customer_name"])
+    if not registered:
+        raise HTTPException(status_code=400, detail=_unknown_customer_detail(await pharmacy_index(db), payload["customer_name"]))
+    payload["customer_name"] = registered
+    result = await service.create(payload, user_id=str(current_user.id))
     return result
 
 
@@ -604,6 +627,24 @@ async def import_excel(
     skipped = 0
     errors: List[str] = []
     seen_invoices = {_invoice_key(inv) for (inv,) in (await db.execute(select(Debts.invoice_number))).all()}
+    pharmacies = await pharmacy_index(db)
+    rejected: List[RejectedRow] = []
+
+    def reject(row_num, row, reason, customer_name="", invoice_number="", similar=""):
+        nonlocal skipped
+        skipped += 1
+        date_cell = row.get("invoice_date")
+        rejected.append(
+            RejectedRow(
+                row=row_num,
+                customer_name=customer_name or _clean_cell(row.get("customer_name")),
+                invoice_number=invoice_number or _clean_cell(row.get("invoice_number")),
+                amount=_clean_cell(row.get("amount")),
+                invoice_date=("" if date_cell is None or pd.isna(date_cell) else str(date_cell).strip()),
+                reason=reason,
+                similar=similar,
+            )
+        )
 
     for idx, row in df.iterrows():
         row_num = idx + 2  # Excel row (1-indexed + header)
@@ -614,25 +655,39 @@ async def import_excel(
 
             if not customer_name or not invoice_number:
                 errors.append(f"صف {row_num}: اسم الزبون أو رقم القائمة فارغ")
-                skipped += 1
+                reject(row_num, row, "اسم الزبون أو رقم القائمة فارغ")
                 continue
 
             try:
                 amount = float(amount_raw)
             except (ValueError, TypeError):
                 errors.append(f"صف {row_num}: مبلغ الدين غير صالح ({amount_raw})")
-                skipped += 1
+                reject(row_num, row, "مبلغ الدين غير صالح")
                 continue
 
             if math.isnan(amount) or amount <= 0:
                 errors.append(f"صف {row_num}: مبلغ الدين يجب أن يكون أكبر من صفر")
-                skipped += 1
+                reject(row_num, row, "مبلغ الدين يجب أن يكون أكبر من صفر")
                 continue
 
             # Check for duplicate invoice number
             if _invoice_key(invoice_number) in seen_invoices:
                 errors.append(f"صف {row_num}: رقم القائمة {invoice_number} موجود مسبقاً - تم تخطيه")
-                skipped += 1
+                reject(row_num, row, "رقم القائمة موجود مسبقاً")
+                continue
+
+            # The name must be a registered customer (ignoring only case and
+            # spacing) — otherwise no rep would ever see the debt. A similar
+            # but different name ("X" for "صيدلية X") is refused, not guessed.
+            registered = pharmacies.registered(customer_name)
+            if not registered:
+                similar = pharmacies.similar(customer_name)
+                if similar:
+                    errors.append(f"صف {row_num}: «{customer_name}» غير مطابق للزبون المسجّل «{similar[0]}» - لم يُرفع")
+                    reject(row_num, row, "الاسم غير مطابق للزبون المسجّل (اسم مشابه)", similar=" ، ".join(similar[:3]))
+                else:
+                    errors.append(f"صف {row_num}: الزبون «{customer_name}» غير موجود في قائمة الزبائن - لم يُرفع")
+                    reject(row_num, row, "الزبون غير موجود في قائمة الزبائن")
                 continue
 
             # Parse date
@@ -643,6 +698,8 @@ async def import_excel(
                     invoice_date = date_raw.strftime("%Y-%m-%d")
                 else:
                     invoice_date = str(date_raw).strip()
+
+            customer_name = registered  # the registered spelling (spacing/case cleaned)
 
             await service.create(
                 {
@@ -660,13 +717,14 @@ async def import_excel(
 
         except Exception as e:
             errors.append(f"صف {row_num}: خطأ - {str(e)}")
-            skipped += 1
+            reject(row_num, row, f"خطأ: {str(e)}")
 
     return ImportResult(
         total_rows=len(df),
         imported=imported,
         skipped=skipped,
         errors=errors[:20],  # Limit error messages
+        rejected=rejected,
     )
 
 
@@ -691,7 +749,7 @@ async def process_payment(
             debt = await service.get_by_id(item.debt_id)
             if not debt:
                 raise HTTPException(status_code=404, detail=f"الدين رقم {item.debt_id} غير موجود")
-            if debt.customer_name != data.customer_name:
+            if normalize_name(debt.customer_name) != normalize_name(data.customer_name):
                 raise HTTPException(status_code=400, detail=f"الدين رقم {item.debt_id} لا يخص هذا الزبون")
             if debt.status == "paid":
                 raise HTTPException(status_code=400, detail=f"القائمة {debt.invoice_number} مسددة بالكامل مسبقاً")
@@ -843,7 +901,7 @@ async def list_payments(
     scoped_names = await _visible_customer_names(db, current_user)
     if scoped_names is not None:
         if scoped_names:
-            in_scope = func.lower(func.trim(Payments.customer_name)).in_(scoped_names)
+            in_scope = name_sql(Payments.customer_name).in_(scoped_names)
         else:
             in_scope = false()
         query = query.where(in_scope)

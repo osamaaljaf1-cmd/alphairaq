@@ -10,6 +10,7 @@ from models.user_assignments import User_assignments
 from models.areas import Areas
 from models.pharmacies import Pharmacies
 from schemas.auth import UserResponse
+from services.customer_names import normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ async def get_rep_scope(db: AsyncSession, rep_id: int) -> CustomerScope:
 
 
 async def get_scoped_pharmacy_names(db: AsyncSession, scope: "CustomerScope") -> Optional[set[str]]:
-    """Resolve the pharmacy names (trimmed + lowercased) visible under this
+    """Resolve the pharmacy names (trimmed, lowercased, spaces collapsed) visible under this
     scope, for matching against free-text fields that store a customer name
     instead of a real pharmacy_id (e.g. Debts.customer_name). Returns None
     when the scope is unrestricted (no filtering needed) — a distinct value
@@ -138,4 +139,4 @@ async def get_scoped_pharmacy_names(db: AsyncSession, scope: "CustomerScope") ->
             )
         )
     )
-    return {(row[0] or "").strip().lower() for row in result.all() if row[0]}
+    return {normalize_name(row[0]) for row in result.all() if row[0]}

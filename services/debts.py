@@ -5,6 +5,7 @@ from sqlalchemy import select, func, false
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.debts import Debts
+from services.customer_names import name_sql, normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class DebtsService:
         try:
             result = await self.db.execute(
                 select(Debts)
-                .where(Debts.customer_name == customer_name)
+                .where(name_sql(Debts.customer_name) == normalize_name(customer_name))
                 .where(Debts.status.in_(["unpaid", "partial"]))
                 .order_by(Debts.id.asc())
             )
@@ -99,7 +100,7 @@ class DebtsService:
                     query = query.where(false())
                     count_query = count_query.where(false())
                 else:
-                    name_filter = func.lower(func.trim(Debts.customer_name)).in_(scoped_names)
+                    name_filter = name_sql(Debts.customer_name).in_(scoped_names)
                     query = query.where(name_filter)
                     count_query = count_query.where(name_filter)
 
@@ -143,7 +144,7 @@ class DebtsService:
                 if not scoped_names:
                     query = query.where(false())
                 else:
-                    query = query.where(func.lower(func.trim(Debts.customer_name)).in_(scoped_names))
+                    query = query.where(name_sql(Debts.customer_name).in_(scoped_names))
 
             query = query.order_by(Debts.customer_name)
             result = await self.db.execute(query)

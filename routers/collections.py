@@ -15,6 +15,7 @@ from models.payments import Payments
 from models.pharmacies import Pharmacies
 from schemas.auth import UserResponse
 from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
+from services.customer_names import name_sql, normalize_name
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ async def _drop_paid_appointments(db: AsyncSession, logs):
     for name, created in rows:
         if not name or created is None:
             continue
-        key = name.strip().lower()
+        key = normalize_name(name)
         if key not in last_paid or created > last_paid[key]:
             last_paid[key] = created
 
@@ -81,7 +82,7 @@ async def _drop_paid_appointments(db: AsyncSession, logs):
 
     kept = []
     for log in logs:
-        key = (log.pharmacy_name or "").strip().lower()
+        key = normalize_name(log.pharmacy_name)
         keys = [key]
         area = area_by_id.get(log.pharmacy_id)
         if area and not key.endswith(area):
@@ -130,7 +131,7 @@ async def get_upcoming_collections(
         if not scoped_names:
             query = query.where(false())
         else:
-            query = query.where(func.lower(func.trim(Activity_logs.pharmacy_name)).in_(scoped_names))
+            query = query.where(name_sql(Activity_logs.pharmacy_name).in_(scoped_names))
 
     query = query.order_by(Activity_logs.collection_date.asc())
 
@@ -209,7 +210,7 @@ async def get_collection_notifications(
         if not scoped_names:
             query = query.where(false())
         else:
-            query = query.where(func.lower(func.trim(Activity_logs.pharmacy_name)).in_(scoped_names))
+            query = query.where(name_sql(Activity_logs.pharmacy_name).in_(scoped_names))
 
     result = await db.execute(query)
     logs = result.scalars().all()

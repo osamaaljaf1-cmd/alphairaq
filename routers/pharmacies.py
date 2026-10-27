@@ -16,6 +16,7 @@ from services.pharmacies import PharmaciesService
 from services.doctors import DoctorsService
 from services.area_scope import get_customer_scope
 from services.permission_check import require_permission
+from services.customer_names import are_similar, clean_name, normalize_name, pharmacy_index
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -250,6 +251,36 @@ async def get_pharmacies(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+async def _checked_name(db: AsyncSession, name: str, own_id: Optional[int] = None) -> str:
+    """The name to store (spacing cleaned). Refused when it is empty or when a
+    different customer already has the same or a very similar name — a debt is
+    linked to its customer by name, so look-alikes end up with hidden debts."""
+    cleaned = clean_name(name)
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="اسم الزبون فارغ")
+    rows = (await db.execute(select(Pharmacies.id, Pharmacies.name))).all()
+    for pid, other in rows:
+        if pid != own_id and other and are_similar(cleaned, other):
+            raise HTTPException(status_code=400, detail=f"يوجد زبون بنفس الاسم أو مشابه جداً: «{clean_name(other)}»")
+    return cleaned
+
+
+async def _clean_name_on_update(db: AsyncSession, pharmacy_id: int, update_dict: dict) -> None:
+    """Clean the spacing of a name being saved. The similarity check only runs
+    when the name really changes, so editing another field of a customer that
+    already has a look-alike is not blocked."""
+    if "name" not in update_dict:
+        return
+    current = (await db.execute(select(Pharmacies.name).where(Pharmacies.id == pharmacy_id))).scalar_one_or_none()
+    cleaned = clean_name(update_dict["name"])
+    if current is not None and normalize_name(cleaned) == normalize_name(current):
+        update_dict["name"] = cleaned
+    elif current is not None and cleaned and clean_name(current).replace(" ", "") == cleaned.replace(" ", ""):
+        update_dict["name"] = cleaned  # only the spacing changed
+    else:
+        update_dict["name"] = await _checked_name(db, update_dict["name"], own_id=pharmacy_id)
+
+
 @router.post("", response_model=PharmaciesResponse, status_code=201)
 async def create_pharmacies(
     data: PharmaciesData,
@@ -263,15 +294,8 @@ async def create_pharmacies(
 
     service = PharmaciesService(db)
     try:
-        normalized = (data.name or "").strip().lower()
-        if normalized:
-            dup_check = await db.execute(
-                select(Pharmacies).where(func.lower(func.trim(Pharmacies.name)) == normalized)
-            )
-            if dup_check.scalar_one_or_none():
-                raise HTTPException(status_code=400, detail="يوجد زبون بنفس الاسم مسبقاً")
-
         create_data = data.model_dump()
+        create_data["name"] = await _checked_name(db, data.name)
         if create_data.get("credit_limit") is None:
             create_data["credit_limit"] = 1_000_000
 
@@ -310,22 +334,23 @@ async def create_pharmaciess_batch(
     logger.debug(f"Batch creating {len(request.items)} pharmaciess")
 
     try:
-        existing_result = await db.execute(select(func.lower(func.trim(Pharmacies.name))))
-        existing_names = {row[0] for row in existing_result.all() if row[0]}
+        index = await pharmacy_index(db)
 
-        seen_in_batch: set[str] = set()
         new_objs: List[Pharmacies] = []
         skipped = 0
 
         for item_data in request.items:
             data = item_data.model_dump()
-            normalized = (data.get("name") or "").strip().lower()
-            if not normalized or normalized in existing_names or normalized in seen_in_batch:
+            cleaned = clean_name(data.get("name"))
+            # same or very similar to a customer that exists (or one added
+            # earlier in this same file) -> not added
+            if not cleaned or index.registered(cleaned) or index.similar(cleaned):
                 skipped += 1
                 continue
+            data["name"] = cleaned
             if data.get("credit_limit") is None:
                 data["credit_limit"] = 1_000_000
-            seen_in_batch.add(normalized)
+            index.add(cleaned)
             new_objs.append(Pharmacies(**data))
 
         db.add_all(new_objs)
@@ -359,6 +384,7 @@ async def update_pharmaciess_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
+            await _clean_name_on_update(db, item.id, update_dict)
             result = await service.update(item.id, update_dict)
             if result:
                 results.append(result)
@@ -387,6 +413,7 @@ async def update_pharmacies(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
+        await _clean_name_on_update(db, id, update_dict)
         result = await service.update(id, update_dict)
         if not result:
             logger.warning(f"Pharmacies with id {id} not found for update")
