@@ -20,6 +20,7 @@ from models.debts import Debts
 from models.payments import Payments
 from models.payment_details import PaymentDetails
 from models.payment_handovers import PaymentHandovers
+from models.payment_receipt_notes import PaymentReceiptNotes
 from schemas.auth import UserResponse
 from services.debts import DebtsService
 from services.permission_check import require_permission, resolve_user_role
@@ -75,7 +76,8 @@ class PaymentRequest(BaseModel):
     manual_amount: Optional[float] = None  # used when debts is empty: a payment not tied to a specific invoice
     discount: float = 0
     returns_amount: float = 0
-    notes: Optional[str] = None
+    notes: Optional[str] = None  # internal, company only
+    receipt_notes: Optional[str] = None  # printed on the customer's receipt
 
 
 class PaymentResponse(BaseModel):
@@ -87,6 +89,7 @@ class PaymentResponse(BaseModel):
     returns_amount: float
     net_received: float
     notes: Optional[str] = None
+    receipt_notes: Optional[str] = None
     created_at: Optional[datetime] = None
     rep_name: Optional[str] = None
     receipt_captured_at: Optional[datetime] = None
@@ -739,6 +742,12 @@ async def process_payment(
     Calculates: net_received = total_selected - discount - returns_amount
     Updates debt statuses accordingly.
     """
+    # The note for the customer's receipt lives in its own table (created on first
+    # use). Make sure it exists before anything is written: creating it commits.
+    receipt_note = (data.receipt_notes or "").strip() or None
+    if receipt_note:
+        await _ensure_receipt_notes_table(db)
+
     service = DebtsService(db)
 
     debt_objects = []
@@ -791,7 +800,7 @@ async def process_payment(
         discount=data.discount,
         returns_amount=data.returns_amount,
         net_received=net_received,
-        notes=data.notes,
+        notes=(data.notes or "").strip() or None,  # internal, never printed on the receipt
         rep_name=current_user.name or current_user.email,
         status="active",
         handed_over=not is_rep,
@@ -800,6 +809,9 @@ async def process_payment(
     )
     db.add(payment)
     await db.flush()  # Get payment.id
+    if receipt_note:
+        db.add(PaymentReceiptNotes(payment_id=payment.id, note=receipt_note))
+    payment.receipt_notes = receipt_note  # not a column: only carried to the response
 
     # Create payment details and update debts
     for debt, amount_applied in debt_objects:
@@ -917,6 +929,18 @@ async def list_payments(
     result = await db.execute(query.order_by(Payments.id.desc()).offset(skip).limit(limit))
     items = result.scalars().all()
 
+    # Attach the receipt notes (a separate table) to the payments being returned
+    if items:
+        await _ensure_receipt_notes_table(db)
+        notes = await db.execute(
+            select(PaymentReceiptNotes.payment_id, PaymentReceiptNotes.note).where(
+                PaymentReceiptNotes.payment_id.in_([p.id for p in items])
+            )
+        )
+        by_payment = {pid: note for pid, note in notes.all()}
+        for p in items:
+            p.receipt_notes = by_payment.get(p.id)
+
     return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
@@ -999,6 +1023,21 @@ async def _ensure_handover_table(db: AsyncSession) -> None:
     await conn.run_sync(lambda c: PaymentHandovers.__table__.create(c, checkfirst=True))
     await db.commit()
     _handover_table_ready = True
+
+
+_receipt_notes_table_ready = False
+
+
+async def _ensure_receipt_notes_table(db: AsyncSession) -> None:
+    """Create the receipt-notes table on first use (idempotent), same pattern as
+    the handover archive: no startup/migration step, payments table untouched."""
+    global _receipt_notes_table_ready
+    if _receipt_notes_table_ready:
+        return
+    conn = await db.connection()
+    await conn.run_sync(lambda c: PaymentReceiptNotes.__table__.create(c, checkfirst=True))
+    await db.commit()
+    _receipt_notes_table_ready = True
 
 
 async def _display_name(db: AsyncSession, user_id: str) -> Optional[str]:
