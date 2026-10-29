@@ -15,6 +15,7 @@ from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from services.access import require_view_any, visible_user_ids
 from models.representatives import Representatives
+from services.feature_permissions import require_feature
 from services.permission_check import require_permission
 
 # Set up logging
@@ -42,6 +43,42 @@ async def _owner_filter(db: AsyncSession, current_user: UserResponse) -> Optiona
     if rep and rep.role == "rep":
         return str(current_user.id)
     return None
+
+
+# Which action permission each workflow stage needs (see services/feature_permissions)
+_STAGE_FEATURE = {
+    "manager_approved": "orders_manager_approval",
+    "accounting_approved": "orders_accounting_approval",
+    "printed": "orders_printing",
+    "delivering": "orders_delivery",
+    "delivered": "orders_delivery",
+}
+# Fields a workflow step writes along with the status; anything else is an ordinary edit
+_WORKFLOW_FIELDS = {
+    "status", "approved_at", "approved_by", "manager_approved_at", "manager_approved_by",
+    "accounting_approved_at", "accounting_approved_by", "printed_at", "printed_by",
+    "delivered_at", "delivered_by",
+}
+
+
+async def _authorize_order_update(db: AsyncSession, current_user: UserResponse, current_status: Optional[str], update_dict: dict) -> None:
+    """Changing an order's status is a workflow step with its own permission
+    (manager approval / accounting approval / printing / delivery); rejecting
+    belongs to whoever holds the order at that stage. Any other change to an order
+    needs edit on the orders page. Without this every logged-in account could push
+    any order to any status."""
+    new_status = update_dict.get("status")
+    is_transition = bool(new_status) and new_status != current_status
+    if is_transition:
+        if new_status == "rejected":
+            feature = "orders_manager_approval" if current_status == "pending" else "orders_accounting_approval"
+        else:
+            feature = _STAGE_FEATURE.get(new_status)
+        if feature:
+            await require_feature(db, current_user, feature)
+            if set(update_dict) <= _WORKFLOW_FIELDS:
+                return
+    await require_permission(db, current_user, "orders", "edit")
 
 
 # ---------- Pydantic Schemas ----------
@@ -259,7 +296,8 @@ async def create_orders(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new orders"""
+    """Create a new orders (needs add on the orders page)"""
+    await require_permission(db, current_user, "orders", "add")
     logger.debug(f"Creating new orders with data: {data}")
     
     service = OrdersService(db)
@@ -284,7 +322,8 @@ async def create_orderss_batch(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple orderss in a single request"""
+    """Create multiple orderss in a single request (needs add on the orders page)"""
+    await require_permission(db, current_user, "orders", "add")
     logger.debug(f"Batch creating {len(request.items)} orderss")
     
     service = OrdersService(db)
@@ -298,6 +337,8 @@ async def create_orderss_batch(
         
         logger.info(f"Batch created {len(results)} orderss successfully")
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
@@ -320,12 +361,18 @@ async def update_orderss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
+            current = await service.get_by_id(item.id, user_id=str(current_user.id))
+            if current is None:
+                continue
+            await _authorize_order_update(db, current_user, current.status, update_dict)
             result = await service.update(item.id, update_dict, user_id=str(current_user.id))
             if result:
                 results.append(result)
         
         logger.info(f"Batch updated {len(results)} orderss successfully")
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
@@ -349,6 +396,10 @@ async def update_orders(
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
         owner_filter = await _owner_filter(db, current_user)
+        current = await service.get_by_id(id, user_id=owner_filter)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Orders not found")
+        await _authorize_order_update(db, current_user, current.status, update_dict)
         result = await service.update(id, update_dict, user_id=owner_filter)
         if not result:
             logger.warning(f"Orders with id {id} not found for update")

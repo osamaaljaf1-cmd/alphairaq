@@ -13,7 +13,7 @@ from services.areas import AreasService
 from services.representative_areas import Representative_areasService
 from services.app_users import App_usersService
 from services.representatives import RepresentativesService
-from services.permission_check import require_permission
+from services.permission_check import require_permission, resolve_user_role
 
 logger = logging.getLogger(__name__)
 
@@ -138,8 +138,13 @@ class GetPermissionsByRoleRequest(BaseModel):
 async def get_permissions_by_role(
     data: GetPermissionsByRoleRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    """Get permissions for a specific role (public - used by frontend to filter nav)"""
+    """Permissions of a role. The app asks for the caller's own role to filter the
+    navigation; reading another role's matrix needs view on the permissions page."""
+    caller_role = await resolve_user_role(db, current_user)
+    if caller_role is not None and caller_role != data.role:
+        await require_permission(db, current_user, "permissions", "view")
     service = PermissionsService(db)
     try:
         items = await service.list_by_field("role", data.role, skip=0, limit=100)
@@ -205,8 +210,9 @@ async def update_permissions(
 @router.post("/areas/list", response_model=AreasListResponse)
 async def list_areas(
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    """List all areas (public)"""
+    """List all areas (logged-in users)"""
     service = AreasService(db)
     try:
         result = await service.get_list(skip=0, limit=500)
@@ -299,8 +305,9 @@ async def delete_area(
 @router.post("/rep-areas/list", response_model=RepAreasListResponse)
 async def list_rep_areas(
     db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
 ):
-    """List all representative-area assignments (public)"""
+    """List all representative-area assignments (logged-in users)"""
     service = Representative_areasService(db)
     try:
         result = await service.get_list(skip=0, limit=2000)

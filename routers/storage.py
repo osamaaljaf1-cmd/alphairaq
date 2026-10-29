@@ -41,7 +41,7 @@ async def create_bucket(request: BucketRequest, _current_user: UserResponse = De
 
 
 @router.get("/list-buckets", response_model=BucketListResponse)
-async def list_buckets(_current_user: UserResponse = Depends(get_current_user)):
+async def list_buckets(_current_user: UserResponse = Depends(get_admin_user)):
     """
     List buckets of the user
     """
@@ -57,7 +57,7 @@ async def list_buckets(_current_user: UserResponse = Depends(get_current_user)):
 
 
 @router.get("/list-objects", response_model=ObjectListResponse)
-async def list_objects(request: OSSBaseModel = Depends(), _current_user: UserResponse = Depends(get_current_user)):
+async def list_objects(request: OSSBaseModel = Depends(), _current_user: UserResponse = Depends(get_admin_user)):
     """
     List objects under the bucket
     """
@@ -73,7 +73,7 @@ async def list_objects(request: OSSBaseModel = Depends(), _current_user: UserRes
 
 
 @router.get("/get-object-info", response_model=ObjectInfo)
-async def get_object_info(request: ObjectRequest = Depends(), _current_user: UserResponse = Depends(get_current_user)):
+async def get_object_info(request: ObjectRequest = Depends(), _current_user: UserResponse = Depends(get_admin_user)):
     """
     Get object metadata from the bucket
     """
@@ -89,7 +89,7 @@ async def get_object_info(request: ObjectRequest = Depends(), _current_user: Use
 
 
 @router.post("/rename-object", response_model=RenameResponse)
-async def rename_object(request: RenameRequest, _current_user: UserResponse = Depends(get_current_user)):
+async def rename_object(request: RenameRequest, _current_user: UserResponse = Depends(get_admin_user)):
     """
     Rename object inside the bucket
     """
@@ -105,7 +105,7 @@ async def rename_object(request: RenameRequest, _current_user: UserResponse = De
 
 
 @router.delete("/delete-object", response_model=DeleteResponse)
-async def delete_object(request: ObjectRequest, _current_user: UserResponse = Depends(get_current_user)):
+async def delete_object(request: ObjectRequest, _current_user: UserResponse = Depends(get_admin_user)):
     """
     Delete object inside the bucket
     """
@@ -121,7 +121,7 @@ async def delete_object(request: ObjectRequest, _current_user: UserResponse = De
 
 
 @router.post("/upload-url", response_model=FileUpDownResponse)
-async def upload_file(request: FileUpDownRequest, _current_user: UserResponse = Depends(get_current_user)):
+async def upload_file(request: FileUpDownRequest, _current_user: UserResponse = Depends(get_admin_user)):
     """
     Get a presigned URL for uploading a file to StorageService.
 
@@ -144,7 +144,7 @@ async def upload_file(request: FileUpDownRequest, _current_user: UserResponse = 
 
 
 @router.post("/download-url", response_model=FileUpDownResponse)
-async def download_file(request: FileUpDownRequest, _current_user: UserResponse = Depends(get_current_user)):
+async def download_file(request: FileUpDownRequest, _current_user: UserResponse = Depends(get_admin_user)):
     """
     Get a presigned URL for downloading a file to StorageService.
     """

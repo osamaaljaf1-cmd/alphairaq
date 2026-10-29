@@ -26,6 +26,7 @@ from services.debts import DebtsService
 from services.permission_check import require_permission, resolve_user_role
 from services.area_scope import get_customer_scope, get_rep_scope, get_scoped_pharmacy_names
 from services.customer_names import PharmacyIndex, name_sql, normalize_name, pharmacy_index
+from services.feature_permissions import require_feature
 
 logger = logging.getLogger(__name__)
 
@@ -402,8 +403,12 @@ async def get_unpaid_debts(
 
 # ---------- Template Download (MUST be before /{debt_id} to avoid route conflict) ----------
 @router.get("/template")
-async def download_template():
-    """Download the Excel template for debt import"""
+async def download_template(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Download the Excel template for debt import (needs the "import" permission)"""
+    await require_permission(db, current_user, "debts", "import")
     # Generate template dynamically using openpyxl
     try:
         from openpyxl import Workbook
@@ -585,6 +590,7 @@ async def import_excel(
 ):
     """Import debts from Excel file (needs add on the debts page).
     Expected columns: اسم الزبون, رقم القائمة, مبلغ الدين, تاريخ القائمة
+    Needs the "import" permission on the debts page.
 
     An invoice number that already exists (ignoring case, spaces and a
     trailing '.0') is skipped and reported — it is never added to the
@@ -594,7 +600,7 @@ async def import_excel(
     """
     from sqlalchemy import select
 
-    await require_permission(db, current_user, "debts", "add")
+    await require_permission(db, current_user, "debts", "import")
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="يرجى رفع ملف Excel (.xlsx أو .xls)")
 
@@ -742,6 +748,9 @@ async def process_payment(
     Calculates: net_received = total_selected - discount - returns_amount
     Updates debt statuses accordingly.
     """
+    # Recording a payment is its own permission (it was open to any logged-in account)
+    await require_feature(db, current_user, "debts_payments")
+
     # The note for the customer's receipt lives in its own table (created on first
     # use). Make sure it exists before anything is written: creating it commits.
     receipt_note = (data.receipt_notes or "").strip() or None
@@ -848,11 +857,10 @@ async def cancel_payment(
     current_user: UserResponse = Depends(get_current_user),
 ):
     """Cancel a previously recorded payment, restoring any debts it was applied to.
-    Requires can_delete permission on the debts page (matches the frontend's
-    canDelete('debts') gate on this action)."""
+    Needs the "cancel a payment" action permission."""
     from sqlalchemy import select
 
-    await require_permission(db, current_user, "debts", "delete")
+    await require_feature(db, current_user, "debts_payment_cancel")
 
     result = await db.execute(select(Payments).where(Payments.id == payment_id))
     payment = result.scalar_one_or_none()
@@ -1061,8 +1069,8 @@ async def confirm_handover(
     records the manual receipt number written on that handover. The selected
     payments are marked handed_over (zeroing them out of the rep's pending
     total) and archived together under the receipt number. One handover covers
-    one rep. Requires can_delete on the debts page, same gate as cancel_payment."""
-    await require_permission(db, current_user, "debts", "delete")
+    one rep. Needs the "confirm cash handover" action permission."""
+    await require_feature(db, current_user, "debts_handover")
 
     receipt_number = (request.receipt_number or "").strip()
     if not receipt_number:

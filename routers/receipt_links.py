@@ -38,6 +38,9 @@ router = APIRouter(prefix="/api/v1", tags=["receipt_links"])
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 _TEMPLATE_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
 
+# Sent on every answer of the public endpoint, errors included
+_PRIVATE_HEADERS = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"}
+
 # Public endpoint: at most this many requests per client address per window
 _RATE_LIMIT = 40
 _RATE_WINDOW_SECONDS = 60
@@ -58,7 +61,7 @@ def _check_rate_limit(request: Request) -> None:
     while window and now - window[0] > _RATE_WINDOW_SECONDS:
         window.popleft()
     if len(window) >= _RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="طلبات كثيرة، حاول بعد قليل")
+        raise HTTPException(status_code=429, detail="طلبات كثيرة، حاول بعد قليل", headers=_PRIVATE_HEADERS)
     window.append(now)
     if len(_hits) > 5000:  # keep the table bounded
         stale = [k for k, v in _hits.items() if not v or now - v[-1] > _RATE_WINDOW_SECONDS]
@@ -147,10 +150,9 @@ async def public_receipt(
 ):
     """Public, read-only receipt. Unknown or malformed tokens all answer the same 404."""
     _check_rate_limit(request)
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    response.headers.update(_PRIVATE_HEADERS)
 
-    not_found = HTTPException(status_code=404, detail="الوصل غير موجود")
+    not_found = HTTPException(status_code=404, detail="الوصل غير موجود", headers=_PRIVATE_HEADERS)
     if not _TOKEN_RE.match(token):
         raise not_found
     await _ensure_links_table(db)

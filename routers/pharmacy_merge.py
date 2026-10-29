@@ -20,6 +20,7 @@ from models.pharmacies import Pharmacies
 from models.returns import Returns
 from models.visits import Visits
 from schemas.auth import UserResponse
+from services.feature_permissions import require_feature
 from services.permission_check import require_permission
 
 logger = logging.getLogger(__name__)
@@ -48,7 +49,7 @@ async def merge_pharmacies(
     fill in any contact details the kept record is missing from the removed
     one, then delete the removed record. All in one transaction. With
     `dry_run` it only reports what would be moved."""
-    await require_permission(db, current_user, "customers", "delete")
+    await require_feature(db, current_user, "customers_merge")
 
     if data.keep_id == data.remove_id:
         raise HTTPException(status_code=400, detail="لا يمكن دمج الزبون مع نفسه")
@@ -132,7 +133,7 @@ async def merge_doctors(
     """Same as merge-pharmacies, for doctors: move everything recorded against
     `remove_id` onto `keep_id`, fill missing details, delete the duplicate.
     With `dry_run` it only reports what would be moved."""
-    await require_permission(db, current_user, "customers", "delete")
+    await require_feature(db, current_user, "customers_merge")
 
     if data.keep_id == data.remove_id:
         raise HTTPException(status_code=400, detail="لا يمكن دمج الطبيب مع نفسه")

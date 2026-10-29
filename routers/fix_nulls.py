@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
+from services.permission_check import require_permission
 from schemas.auth import UserResponse
 
 router = APIRouter(prefix="/api/v1/fix", tags=["fix"])
@@ -16,7 +17,9 @@ async def fix_product_nulls(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Replace NULL stock_quantity with 0 and NULL category/code/unit with empty string."""
+    """Replace NULL stock_quantity with 0 and NULL category/code/unit with empty string
+    (needs edit on the items page)."""
+    await require_permission(db, current_user, "items", "edit")
     try:
         await db.execute(
             text("UPDATE products SET stock_quantity = 0 WHERE stock_quantity IS NULL")

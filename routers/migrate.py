@@ -9,6 +9,8 @@ from dependencies.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
+from services.feature_permissions import FEATURES, default_for_seed
+
 router = APIRouter(prefix="/api/v1/migrate", tags=["migrate"])
 
 # Whitelist of allowed table names and column definitions for migration safety
@@ -273,6 +275,9 @@ _SEED_PAGES = (
 # another page, so nobody loses access they had before the page was split off.
 _INHERIT_FROM = {"rep_areas": "permissions"}
 
+# Action permissions (services/feature_permissions): seeded with what each role could already do
+_FEATURE_PAGES = tuple(FEATURES)
+
 # Pages that should have can_view=True for ALL roles by default
 _DEFAULT_VIEW_ALL_PAGES = frozenset({"doctor_visits", "pharmacy_visits"})
 
@@ -318,6 +323,12 @@ async def seed_permissions(
     }
 
     def _defaults(role: str, page: str) -> dict:
+        if page in FEATURES:
+            allowed = default_for_seed(role, page, flags_by_pair)
+            return {
+                "can_view": allowed, "can_add": False, "can_edit": allowed, "can_delete": False,
+                "can_import": False, "can_export": False,
+            }
         inherited = flags_by_pair.get((role, _INHERIT_FROM.get(page, "")))
         if inherited is not None:
             return dict(inherited)
@@ -330,9 +341,33 @@ async def seed_permissions(
     to_insert = [
         {"role": role, "page": page, **_defaults(role, page)}
         for role in all_roles
-        for page in _SEED_PAGES
+        for page in _SEED_PAGES + _FEATURE_PAGES
         if (role, page) not in existing_pairs
     ]
+
+    # Importing debts used to ride on "add" (and the page showed the button to everyone).
+    # It is now the "import" checkbox. Once, give it to the roles that could import
+    # before and manage the debts (add + edit), so the daily import keeps working;
+    # a marker row records that this ran, so later changes in the matrix are kept.
+    marker = ("__migrations__", "debts_import_from_add")
+    if marker not in existing_pairs:
+        try:
+            await db.execute(
+                text("UPDATE permissions SET can_import = :on WHERE page = 'debts' AND can_add = :on AND can_edit = :on AND (can_import IS NULL OR can_import = :off)"),
+                {"on": True, "off": False},
+            )
+            await db.execute(
+                text(
+                    "INSERT INTO permissions (role, page, can_view, can_add, can_edit, can_delete, can_import, can_export) "
+                    "VALUES (:role, :page, :off, :off, :off, :off, :off, :off)"
+                ),
+                {"role": marker[0], "page": marker[1], "off": False},
+            )
+            await db.commit()
+            results.append("debts import: granted to roles with add+edit on debts (one-time)")
+        except Exception as e:
+            await db.rollback()
+            results.append(f"debts import backfill error: {str(e)}")
 
     if to_insert:
         try:
