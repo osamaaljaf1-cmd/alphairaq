@@ -166,7 +166,7 @@ def read_export(path):
 # ---------------------------------------------------------------- talking to the app
 def load_config():
     cp = configparser.ConfigParser()
-    cp.read(os.path.join(HERE, "config.ini"), encoding="utf-8")
+    cp.read(os.path.join(HERE, "config.ini"), encoding="utf-8-sig")  # tolerate the BOM Notepad adds
     cfg = {
         "url": cp.get("server", "url", fallback="").rstrip("/"),
         "key": os.environ.get("ALPHA_SYNC_KEY") or cp.get("server", "key", fallback=""),
@@ -208,6 +208,8 @@ def print_report(res):
     print(f"  قوائم صالحة بالملف: {c['file_rows_valid']}   مرتجعات متجاهلة: {c['ignored_returns']}")
     print(f"  ستُضاف: {c['to_insert']}   ستتحدّث: {c['to_update']}   ستُقفل: {c['to_close']}   بدون تغيير: {c['unchanged']}   مرفوضة: {c['rejected']}")
     print(f"  المتبقي قبل: {t['remaining_before']:,.2f}   بالملف: {t['remaining_in_file']:,.2f}   بعد التطبيق: {t['remaining_after']:,.2f}")
+    if c.get("kept_for_pending_collections"):
+        print(f"  تحصيلات المندوبين غير المستلمة (مخصومة من متبقي فينكس): {c['kept_for_pending_collections']} قائمة، {t['pending_collections_total']:,.2f}")
     if res.get("blocked_reason"):
         print("  ⚠ محجوز:", res["blocked_reason"])
 
@@ -223,6 +225,7 @@ def save_report(res, path):
     for r in res["rejected"]:
         ws.append([r["row"], r["customer_name"], r["invoice_number"], r["amount"], r["remaining"], r["invoice_date"], r["reason"], r["similar"]])
     for title, key, cols in (
+        ("تحصيلات غير مستلمة", "pending_collections", ["invoice_number", "customer_name", "program_remaining", "collected_in_app", "remaining"]),
         ("ستُضاف", "inserted", ["invoice_number", "customer_name", "amount", "remaining_amount"]),
         ("ستتحدّث", "updated", ["invoice_number", "customer_name", "remaining_from", "remaining_to", "amount_from", "amount_to"]),
         ("ستُقفل", "closed", ["invoice_number", "customer_name", "remaining_was"]),

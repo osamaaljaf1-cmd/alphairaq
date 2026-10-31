@@ -9,6 +9,10 @@ complete list of its open invoices and makes the table agree with it:
 - an invoice of an unknown (or only similarly named) customer is refused and reported,
   with the same rules as the Excel import.
 
+A rep's collection recorded in the app that accounting has not confirmed yet (not handed
+over, not cancelled) is not in the program either, so it is taken off the program's remaining:
+the invoice stays as collected here until accounting confirms it and enters it there.
+
 Every applied run stores what it changed (the debt as it was before), so it can be undone.
 A run that would close an unusual share of the open debts is held back unless forced: a
 truncated export must not wipe the table.
@@ -25,11 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.debt_sync import DebtSyncChanges, DebtSyncRuns
 from models.debts import Debts
 from models.payment_details import PaymentDetails
+from models.payments import Payments
 from services.customer_names import normalize_name, pharmacy_index
 
 SYNC_USER_ID = "phenix_sync"
 _EPS = 0.005
-_LIST_CAP = 500
+_LIST_CAP = 5000
 # held back unless forced: closing more than this share of the open debts (and more than the floor)
 _CLOSE_SHARE = 0.30
 _CLOSE_FLOOR = 20
@@ -81,6 +86,8 @@ class Plan:
     closes: List[dict] = field(default_factory=list)
     rejected: List[dict] = field(default_factory=list)
     unchanged: int = 0
+    pending: List[dict] = field(default_factory=list)  # invoices reduced by collections not yet handed over
+    pending_total: float = 0.0
     ignored_returns: int = 0
     valid_rows: int = 0
     file_remaining_total: float = 0.0
@@ -99,8 +106,21 @@ def _snapshot(d: Debts) -> dict:
     }
 
 
+async def pending_collections(db: AsyncSession) -> Dict[int, float]:
+    """debt id -> amount collected by reps in the app that accounting has not confirmed yet."""
+    stmt = (
+        select(PaymentDetails.debt_id, func.sum(PaymentDetails.amount_applied))
+        .join(Payments, Payments.id == PaymentDetails.payment_id)
+        .where(func.coalesce(Payments.status, "active") != "canceled")
+        .where(Payments.handed_over.is_(False))
+        .group_by(PaymentDetails.debt_id)
+    )
+    return {debt_id: float(total) for debt_id, total in (await db.execute(stmt)).all() if total}
+
+
 async def build_plan(db: AsyncSession, rows: List[dict], ignored_returns: int = 0) -> Plan:
     plan = Plan(ignored_returns=ignored_returns)
+    pending = await pending_collections(db)
     existing = {invoice_key(d.invoice_number): d for d in (await db.execute(select(Debts))).scalars().all()}
     index = await pharmacy_index(db)
     plan.open_before = sum(1 for d in existing.values() if d.remaining_amount > _EPS)
@@ -160,6 +180,19 @@ async def build_plan(db: AsyncSession, rows: List[dict], ignored_returns: int = 
             if normalize_name(debt.customer_name) != normalize_name(name):
                 reject(i, row, f"القائمة مسجّلة على زبون آخر بالتطبيق («{debt.customer_name}») - لم تتغير")
                 continue
+            held = min(pending.get(debt.id, 0.0), remaining)
+            if held > _EPS:
+                plan.pending.append(
+                    {
+                        "invoice_number": debt.invoice_number,
+                        "customer_name": debt.customer_name,
+                        "program_remaining": remaining,
+                        "collected_in_app": round(held, 2),
+                        "remaining": round(remaining - held, 2),
+                    }
+                )
+                plan.pending_total += held
+                remaining = max(remaining - held, 0.0)
             to = {"amount": amount, "remaining_amount": remaining, "status": status_for(amount, remaining)}
             if date:
                 to["invoice_date"] = date
@@ -203,6 +236,7 @@ async def build_plan(db: AsyncSession, rows: List[dict], ignored_returns: int = 
             plan.closes.append({"debt": debt, "before": _snapshot(debt)})
 
     plan.file_remaining_total = round(plan.file_remaining_total, 2)
+    plan.pending_total = round(plan.pending_total, 2)
     n_close = len(plan.closes)
     if plan.valid_rows == 0:
         plan.blocked_reason = "الملف لا يحتوي أي قائمة صالحة"
@@ -231,14 +265,17 @@ def report(plan: Plan) -> dict:
             "to_close": len(plan.closes),
             "unchanged": plan.unchanged,
             "rejected": len(plan.rejected),
+            "kept_for_pending_collections": len(plan.pending),
         },
         "totals": {
             "open_debts_before": plan.open_before,
             "remaining_before": plan.remaining_before,
             "remaining_in_file": plan.file_remaining_total,
             "remaining_after": round(remaining_after, 2),
+            "pending_collections_total": plan.pending_total,
         },
         "blocked_reason": plan.blocked_reason,
+        "pending_collections": plan.pending[:_LIST_CAP],
         "inserted": [
             {k: i[k] for k in ("invoice_number", "customer_name", "amount", "remaining_amount")} for i in plan.inserts[:_LIST_CAP]
         ],
