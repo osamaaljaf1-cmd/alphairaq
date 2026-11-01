@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from models.activity_logs import Activity_logs
+from models.debts import Debts
 from models.payments import Payments
 from models.pharmacies import Pharmacies
 from schemas.auth import UserResponse
@@ -47,11 +48,21 @@ class CollectionsResponse(BaseModel):
 async def _drop_paid_appointments(db: AsyncSession, logs):
     """A collection appointment is resolved once the customer pays: drop any
     appointment for which a non-cancelled payment was recorded for the same
-    customer AFTER the appointment was logged. Non-destructive — the visit
+    customer AFTER the appointment was logged, and any appointment of a customer
+    who no longer owes anything (the debt was settled in the accounting program,
+    so no payment was ever recorded here). Non-destructive — the visit
     record stays, it just stops counting as an outstanding/overdue
-    appointment (and comes back if that payment is later cancelled)."""
+    appointment (and comes back if that payment is later cancelled or the debt
+    reopens)."""
     if not logs:
         return logs
+    owing = {
+        normalize_name(name)
+        for (name,) in (
+            await db.execute(select(Debts.customer_name).where(Debts.remaining_amount > 0.005).distinct())
+        ).all()
+        if name
+    }
     earliest = min((l.timestamp for l in logs if l.timestamp), default=None)
     query = select(Payments.customer_name, Payments.created_at).where(
         or_(Payments.status.is_(None), Payments.status != "canceled")
@@ -87,6 +98,8 @@ async def _drop_paid_appointments(db: AsyncSession, logs):
         area = area_by_id.get(log.pharmacy_id)
         if area and not key.endswith(area):
             keys.append(f"{key} {area}")
+        if not any(k in owing for k in keys):
+            continue  # nothing left to collect from this customer
         paid_times = [last_paid[k] for k in keys if k in last_paid]
         paid_at = max(paid_times) if paid_times else None
         if paid_at is not None and log.timestamp is not None and paid_at > log.timestamp:
