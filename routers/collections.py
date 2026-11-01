@@ -52,6 +52,10 @@ class CollectionItem(BaseModel):
     status: str  # overdue, today, upcoming
     appointment_number: int = 1  # 2 = the customer did not pay at the previous date
     previous_dates: List[str] = []  # the dates this appointment replaced
+    # days between the previous appointment's date and the day this one was taken:
+    # 0 = given during the visit on the previous due day, > 0 = taken that many days after it
+    # passed, < 0 = renewed before it came. None for a first appointment.
+    renewal_gap_days: Optional[int] = None
     visited_on_due_date: Optional[bool] = None  # None until the day has come
     visit_at: Optional[str] = None  # when the rep visited the customer on that day
     missed_visit: bool = False  # the day has passed and the rep did not go to the customer
@@ -149,10 +153,14 @@ async def _resolve_appointments(db: AsyncSession, logs: List[Activity_logs]) -> 
             continue  # paid after the latest appointment was taken
         # the chain: the appointments taken since the customer last paid
         chain = [l for l in group if paid_at is None or l.timestamp is None or _as_utc(l.timestamp) > paid_at]
+        gap = None
+        if len(chain) > 1 and chain[-2].collection_date and latest.timestamp is not None:
+            gap = (_local_day(latest.timestamp) - chain[-2].collection_date).days
         resolved.append(
             {
                 "log": latest,
                 "keys": keys,
+                "gap": gap,
                 "number": len(chain),
                 "previous_dates": [l.collection_date.isoformat() for l in chain[:-1] if l.collection_date],
             }
@@ -309,6 +317,7 @@ async def get_upcoming_collections(
                 status=status,
                 appointment_number=r["number"],
                 previous_dates=r["previous_dates"],
+                renewal_gap_days=r["gap"],
                 visited_on_due_date=r["visited"],
                 visit_at=r["visit_at"].isoformat() if r["visit_at"] else None,
                 missed_visit=r["missed"],
