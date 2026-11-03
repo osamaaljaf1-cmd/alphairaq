@@ -11,12 +11,12 @@
 Both closing steps need the delivery action permission and an order that is out for delivery.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -32,6 +32,7 @@ from schemas.auth import UserResponse
 from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
 from services.customer_names import normalize_name
 from services.feature_permissions import require_feature
+from services.access import require_view_any
 from services.permission_check import require_permission
 
 logger = logging.getLogger(__name__)
@@ -305,6 +306,84 @@ async def customer_deliveries(
             "recorded_at": d.recorded_at.isoformat() if d.recorded_at else None,
         }
         for d, total, _ in rows
+    ]
+
+
+@router.get("/order-deliveries/customers-with-photos")
+async def customers_with_photos(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """The customers that have delivered orders with a receipt photo (and how many): the debts
+    page shows a photo icon next to them. Only the customers the caller may see."""
+    await require_view_any(db, current_user, ["customers", "orders", "debts"])
+    await ensure_tables(db)
+    counts = (
+        await db.execute(
+            select(OrderDeliveries.pharmacy_id, func.count(OrderDeliveries.id))
+            .where(OrderDeliveries.outcome == "delivered", OrderDeliveries.photo.isnot(None), OrderDeliveries.pharmacy_id.isnot(None))
+            .group_by(OrderDeliveries.pharmacy_id)
+        )
+    ).all()
+    if not counts:
+        return []
+    scope = await get_customer_scope(db, current_user)
+    visible = await get_scoped_pharmacy_names(db, scope)
+    names = {pid: name for pid, name in (await db.execute(select(Pharmacies.id, Pharmacies.name).where(Pharmacies.id.in_([c[0] for c in counts])))).all()}
+    return [
+        {"pharmacy_id": pid, "name": names[pid], "count": n}
+        for pid, n in counts
+        if pid in names and (visible is None or normalize_name(names[pid]) in visible)
+    ]
+
+
+@router.get("/order-deliveries/index")
+async def deliveries_index(
+    limit: int = 1500,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """A compact list of what was recorded per order (no photos): which orders have a delivery
+    record and a receipt photo, so the orders list can show a photo icon on them. A rep/manager
+    only gets the records of their own scope."""
+    await require_permission(db, current_user, "orders", "view")
+    await ensure_tables(db)
+    query = select(OrderDeliveries.order_id, OrderDeliveries.outcome, OrderDeliveries.photo.isnot(None))
+    scope = await get_customer_scope(db, current_user)
+    if not scope.unrestricted:
+        query = query.where(OrderDeliveries.representative_id.in_(scope.rep_ids or [-1]))
+    rows = (await db.execute(query.order_by(OrderDeliveries.id.desc()).limit(max(1, min(limit, 5000))))).all()
+    return [{"order_id": oid, "outcome": outcome, "has_photo": bool(has_photo)} for oid, outcome, has_photo in rows]
+
+
+@router.get("/order-deliveries/month")
+async def month_records(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """What was delivered or refused this (Iraq) month, per order, without the photos: the
+    dashboard's delivered / refused totals. A rep/manager only gets their own scope's orders."""
+    await require_permission(db, current_user, "orders", "view")
+    await ensure_tables(db)
+    local = timezone(timedelta(hours=3))
+    today = datetime.now(local).date()
+    month_start = datetime.combine(date(today.year, today.month, 1), time.min, tzinfo=local).astimezone(timezone.utc)
+    query = select(OrderDeliveries).where(OrderDeliveries.recorded_at >= month_start)
+    scope = await get_customer_scope(db, current_user)
+    if not scope.unrestricted:
+        query = query.where(OrderDeliveries.representative_id.in_(scope.rep_ids or [-1]))
+    rows = (await db.execute(query.order_by(OrderDeliveries.id.desc()))).scalars().all()
+    return [
+        {
+            "order_id": d.order_id,
+            "outcome": d.outcome,
+            "reason": d.reason,
+            "amount": d.order_amount,
+            "pharmacy_id": d.pharmacy_id,
+            "representative_id": d.representative_id,
+            "recorded_at": d.recorded_at.isoformat() if d.recorded_at else None,
+        }
+        for d in rows
     ]
 
 
