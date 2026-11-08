@@ -5,6 +5,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -12,11 +13,33 @@ from services.order_items import Order_itemsService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from services.access import require_view_any, visible_user_ids
+from models.orders import Orders
+from services.permission_check import require_permission
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/entities/order_items", tags=["order_items"])
+
+EDIT_VIA_ORDER = "أصناف الطلب تُعدَّل من زر «تعديل الطلب» حسب مرحلة الطلب"
+
+
+async def _ensure_may_add_items(db: AsyncSession, current_user: UserResponse, order_ids) -> None:
+    """Lines are added only while a new order is being made: to an order that is still pending, that
+    the caller made, by someone who may add (or edit) orders. Changing or removing lines of an order
+    that exists is an edit and goes through /api/v1/order-edits, which knows the stage rules."""
+    try:
+        await require_permission(db, current_user, "orders", "add")
+    except HTTPException:
+        await require_permission(db, current_user, "orders", "edit")
+    for order_id in set(order_ids):
+        order = (await db.execute(select(Orders).where(Orders.id == order_id))).scalar_one_or_none()
+        if order is None:
+            raise HTTPException(status_code=404, detail="الطلب غير موجود")
+        if order.user_id != str(current_user.id):
+            raise HTTPException(status_code=403, detail="لا يمكنك إضافة أصناف إلى طلب غيرك")
+        if order.status != "pending":
+            raise HTTPException(status_code=409, detail=EDIT_VIA_ORDER)
 
 
 # ---------- Pydantic Schemas ----------
@@ -202,9 +225,10 @@ async def create_order_items(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new order_items"""
+    """Create a new order_items (only while the caller is making the order)"""
     logger.debug(f"Creating new order_items with data: {data}")
-    
+    await _ensure_may_add_items(db, current_user, [data.order_id])
+
     service = Order_itemsService(db)
     try:
         result = await service.create(data.model_dump(), user_id=str(current_user.id))
@@ -229,7 +253,8 @@ async def create_order_itemss_batch(
 ):
     """Create multiple order_itemss in a single request"""
     logger.debug(f"Batch creating {len(request.items)} order_itemss")
-    
+    await _ensure_may_add_items(db, current_user, [i.order_id for i in request.items])
+
     service = Order_itemsService(db)
     results = []
     
@@ -255,7 +280,8 @@ async def update_order_itemss_batch(
 ):
     """Update multiple order_itemss in a single request (requires ownership)"""
     logger.debug(f"Batch updating {len(request.items)} order_itemss")
-    
+    raise HTTPException(status_code=409, detail=EDIT_VIA_ORDER)
+
     service = Order_itemsService(db)
     results = []
     
@@ -284,6 +310,7 @@ async def update_order_items(
 ):
     """Update an existing order_items (requires ownership)"""
     logger.debug(f"Updating order_items {id} with data: {data}")
+    raise HTTPException(status_code=409, detail=EDIT_VIA_ORDER)
 
     service = Order_itemsService(db)
     try:
@@ -314,7 +341,8 @@ async def delete_order_itemss_batch(
 ):
     """Delete multiple order_itemss by their IDs (requires ownership)"""
     logger.debug(f"Batch deleting {len(request.ids)} order_itemss")
-    
+    raise HTTPException(status_code=409, detail=EDIT_VIA_ORDER)
+
     service = Order_itemsService(db)
     deleted_count = 0
     
@@ -340,7 +368,8 @@ async def delete_order_items(
 ):
     """Delete a single order_items by ID (requires ownership)"""
     logger.debug(f"Deleting order_items with id: {id}")
-    
+    raise HTTPException(status_code=409, detail=EDIT_VIA_ORDER)
+
     service = Order_itemsService(db)
     try:
         success = await service.delete(id, user_id=str(current_user.id))

@@ -65,8 +65,10 @@ async def _authorize_order_update(db: AsyncSession, current_user: UserResponse, 
     """Changing an order's status is a workflow step with its own permission
     (manager approval / accounting approval / printing / delivery); rejecting
     belongs to whoever holds the order at that stage. Any other change to an order
-    needs edit on the orders page. Without this every logged-in account could push
-    any order to any status."""
+    (its lines, totals, customer, notes) is an edit, and edits go through
+    /api/v1/order-edits, which knows who may change what at which stage and keeps a
+    log; this endpoint refuses them. Without this every logged-in account could push
+    any order to any status, and a rep could rewrite an order that was already approved."""
     new_status = update_dict.get("status")
     is_transition = bool(new_status) and new_status != current_status
     if is_transition:
@@ -78,7 +80,7 @@ async def _authorize_order_update(db: AsyncSession, current_user: UserResponse, 
             await require_feature(db, current_user, feature)
             if set(update_dict) <= _WORKFLOW_FIELDS:
                 return
-    await require_permission(db, current_user, "orders", "edit")
+    raise HTTPException(status_code=409, detail="تعديل الطلب يتم من زر «تعديل الطلب» حسب مرحلة الطلب")
 
 
 # ---------- Pydantic Schemas ----------
