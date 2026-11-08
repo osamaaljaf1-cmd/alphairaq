@@ -12,6 +12,9 @@ complete list of its open invoices and makes the table agree with it:
 A rep's collection recorded in the app that accounting has not confirmed yet (not handed
 over, not cancelled) is not in the program either, so it is taken off the program's remaining:
 the invoice stays as collected here until accounting confirms it and enters it there.
+A collection confirmed (or recorded by accounting itself) AFTER the last applied sync gets one more
+sync of grace: the program may not show it yet, so the invoice stays collected here until the next
+sync, which trusts the program. If the program already shows the payment, nothing is taken off twice.
 
 Every applied run stores what it changed (the debt as it was before), so it can be undone.
 A run that would close an unusual share of the open debts is held back unless forced: a
@@ -21,7 +24,8 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,21 +110,44 @@ def _snapshot(d: Debts) -> dict:
     }
 
 
-async def pending_collections(db: AsyncSession) -> Dict[int, float]:
-    """debt id -> amount collected by reps in the app that accounting has not confirmed yet."""
+def _as_utc(ts: datetime) -> datetime:
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+async def pending_collections(db: AsyncSession) -> Tuple[Dict[int, float], Dict[int, float]]:
+    """(not confirmed, confirmed since the last applied sync): debt id -> amount collected in the app.
+
+    The first: collected by reps and not handed over to accounting yet. The second: handed over (or
+    recorded by accounting) after the last applied sync, so the program may not show it yet; it is
+    protected for that one sync only. Without an applied sync yet nothing counts as the second kind
+    (the first sync reconciles with the program)."""
+    await ensure_tables(db)
+    last_run = (await db.execute(select(func.max(DebtSyncRuns.created_at)).where(DebtSyncRuns.status == "applied"))).scalar_one_or_none()
+    last_run = _as_utc(last_run) if last_run else None
     stmt = (
-        select(PaymentDetails.debt_id, func.sum(PaymentDetails.amount_applied))
+        select(PaymentDetails.debt_id, PaymentDetails.amount_applied, Payments.handed_over, Payments.handed_over_at)
         .join(Payments, Payments.id == PaymentDetails.payment_id)
         .where(func.coalesce(Payments.status, "active") != "canceled")
-        .where(Payments.handed_over.is_(False))
-        .group_by(PaymentDetails.debt_id)
     )
-    return {debt_id: float(total) for debt_id, total in (await db.execute(stmt)).all() if total}
+    if last_run is None:
+        stmt = stmt.where(Payments.handed_over.is_(False))
+    else:  # the exact comparison with the last run is made below, on aware datetimes
+        stmt = stmt.where((Payments.handed_over.is_(False)) | (Payments.handed_over_at.isnot(None)))
+    not_confirmed: Dict[int, float] = {}
+    recent: Dict[int, float] = {}
+    for debt_id, amount, handed, handed_at in (await db.execute(stmt)).all():
+        if not amount:
+            continue
+        if handed is False:
+            not_confirmed[debt_id] = not_confirmed.get(debt_id, 0.0) + float(amount)
+        elif last_run is not None and handed_at is not None and _as_utc(handed_at) > last_run:
+            recent[debt_id] = recent.get(debt_id, 0.0) + float(amount)
+    return not_confirmed, recent
 
 
 async def build_plan(db: AsyncSession, rows: List[dict], ignored_returns: int = 0) -> Plan:
     plan = Plan(ignored_returns=ignored_returns)
-    pending = await pending_collections(db)
+    pending, recent = await pending_collections(db)
     existing = {invoice_key(d.invoice_number): d for d in (await db.execute(select(Debts))).scalars().all()}
     index = await pharmacy_index(db)
     plan.open_before = sum(1 for d in existing.values() if d.remaining_amount > _EPS)
@@ -181,18 +208,25 @@ async def build_plan(db: AsyncSession, rows: List[dict], ignored_returns: int = 
                 reject(i, row, f"القائمة مسجّلة على زبون آخر بالتطبيق («{debt.customer_name}») - لم تتغير")
                 continue
             held = min(pending.get(debt.id, 0.0), remaining)
-            if held > _EPS:
+            program_remaining = remaining
+            remaining = max(remaining - held, 0.0)
+            # a collection confirmed since the last sync: the program may not show it yet. What the app
+            # holds (its remaining) already has it off, so the program shows it if the program's figure
+            # is not higher than the app's; only the difference is taken off, never the amount twice.
+            held_recent = max(0.0, min(recent.get(debt.id, 0.0), remaining - debt.remaining_amount))
+            remaining = max(remaining - held_recent, 0.0)
+            if held > _EPS or held_recent > _EPS:
                 plan.pending.append(
                     {
                         "invoice_number": debt.invoice_number,
                         "customer_name": debt.customer_name,
-                        "program_remaining": remaining,
-                        "collected_in_app": round(held, 2),
-                        "remaining": round(remaining - held, 2),
+                        "program_remaining": program_remaining,
+                        "collected_in_app": round(held + held_recent, 2),
+                        "remaining": round(remaining, 2),
+                        "confirmed": held_recent > _EPS and held <= _EPS,
                     }
                 )
-                plan.pending_total += held
-                remaining = max(remaining - held, 0.0)
+                plan.pending_total += held + held_recent
             to = {"amount": amount, "remaining_amount": remaining, "status": status_for(amount, remaining)}
             if date:
                 to["invoice_date"] = date
