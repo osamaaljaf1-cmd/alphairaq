@@ -3,7 +3,9 @@
 Same mirroring as the script next to the accounting program (services/debt_sync.py): the file is the
 FULL list of open invoices, new invoices of registered customers are added, known ones updated,
 invoices gone from the file are closed, unknown customers are refused and listed, and a run that
-would close an unusual share of the debts is held back unless forced. Every applied run can be undone
+would close an unusual share of the debts is held back unless forced. The returns of the file are mirrored
+too, as negative credits on their customers. The report also compares, per representative, what the
+program shows with what the app holds before and after. Every applied run can be undone
 (the latest one). Needs the "debts_phenix_sync" action permission (accounting and admin by default).
 
 - POST /api/v1/debt-sync-upload/preview   the file -> what WOULD change (writes nothing)
@@ -24,7 +26,7 @@ from dependencies.auth import get_current_user
 from models.app_users import App_users
 from models.debt_sync import DebtSyncRuns
 from schemas.auth import UserResponse
-from services.debt_sync import UndoError, apply_plan, build_plan, ensure_tables, report, undo_run
+from services.debt_sync import UndoError, apply_plan, build_plan, ensure_tables, rep_breakdown, report, undo_run
 from services.feature_permissions import require_feature
 from services.phenix_export import ExportError, MAX_FILE_BYTES, read_export
 
@@ -58,10 +60,11 @@ async def preview(
     current_user: UserResponse = Depends(get_current_user),
 ):
     await require_feature(db, current_user, FEATURE)
-    rows, returns, info = await _read_upload(file)
-    plan = await build_plan(db, rows, returns)
+    rows, returns, info, credits = await _read_upload(file)
+    plan = await build_plan(db, rows, returns, credits)
     result = report(plan)
     result.update({"dry_run": True, "applied": False, "run_id": None, "file": info, "file_name": file.filename})
+    result["by_rep"] = await rep_breakdown(db, plan)
     return result
 
 
@@ -76,11 +79,12 @@ async def apply(
     await require_feature(db, current_user, FEATURE)
     if not confirm:
         raise HTTPException(status_code=400, detail="يلزم تأكيد التطبيق")
-    rows, returns, info = await _read_upload(file)
+    rows, returns, info, credits = await _read_upload(file)
     # planned again against the debts as they are now, not as they were when the preview was made
-    plan = await build_plan(db, rows, returns)
+    plan = await build_plan(db, rows, returns, credits)
     result = report(plan)
     result.update({"dry_run": False, "applied": False, "run_id": None, "file": info, "file_name": file.filename})
+    result["by_rep"] = await rep_breakdown(db, plan)
     if plan.blocked_reason and not (force and plan.valid_rows > 0):
         return result
     try:

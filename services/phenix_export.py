@@ -6,6 +6,10 @@ accountant's PC): the export is the FULL list of open invoices with the columns 
 sit one column to the left of its header: the offset is detected, not assumed. A wrong file (other
 report, shifted columns, amounts that do not add up) is refused with the reason, before anything is
 read into the debts table.
+
+Returns / credit notes (the type says مرتجع, or the amount is negative) are not debts: they are
+read apart, with the part not yet applied (the remaining) as a NEGATIVE figure, so the customer can
+show the program's net balance.
 """
 import datetime as dt
 import io
@@ -58,8 +62,10 @@ def _date(value) -> str:
     return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else text
 
 
-def read_export(content: bytes) -> Tuple[List[dict], int, dict]:
-    """-> (rows, ignored_returns, info). Raises ExportError when the file is not the debts export."""
+def read_export(content: bytes) -> Tuple[List[dict], int, dict, List[dict]]:
+    """-> (rows, returns, info, credits). ``returns`` counts the return lines; ``credits`` are the ones
+    that still have an unapplied amount (negative). Raises ExportError when the file is not the debts
+    export."""
     if len(content) > MAX_FILE_BYTES:
         raise ExportError("الملف كبير جداً")
     try:
@@ -108,7 +114,7 @@ def read_export(content: bytes) -> Tuple[List[dict], int, dict]:
     if offset is None:
         raise ExportError("ترتيب الأعمدة بالملف غير مطابق للمتوقع (اسم الزبون/الباقي/رقم السند). لم يُقرأ شيء.")
 
-    rows, returns, mismatches = [], 0, 0
+    rows, credits, returns, mismatches = [], [], 0, 0
     for r in data:
         def get(k):
             i = pos[k] - offset
@@ -122,6 +128,16 @@ def read_export(content: bytes) -> Tuple[List[dict], int, dict]:
             raise ExportError(f"سطر بمبلغ غير مفهوم (رقم السند {invoice or '?'}).")
         if amount <= 0 or "مرتجع" in _text(get("kind")):
             returns += 1
+            if abs(remaining) > 0.005 and invoice and customer:
+                credits.append(
+                    {
+                        "invoice_number": invoice,
+                        "customer_name": customer,
+                        "amount": -abs(amount),
+                        "remaining": -abs(remaining),
+                        "invoice_date": _date(get("date")),
+                    }
+                )
             continue
         if paid is not None and abs(amount - paid - remaining) > 1:
             mismatches += 1
@@ -143,5 +159,7 @@ def read_export(content: bytes) -> Tuple[List[dict], int, dict]:
         "returns_ignored": returns,
         "customers": len({r["customer_name"] for r in rows}),
         "remaining_total": round(sum(r["remaining"] for r in rows), 2),
+        "credits": len(credits),
+        "credits_total": round(sum(c["remaining"] for c in credits), 2),
     }
-    return rows, returns, info
+    return rows, returns, info, credits
