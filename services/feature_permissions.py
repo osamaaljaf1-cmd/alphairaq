@@ -30,6 +30,7 @@ FEATURES: Dict[str, dict] = {
     "orders_printing": {"roles": ("admin", "accounting", "printing")},
     "orders_delivery": {"roles": ("admin", "delivery")},
     # debts and collections
+    "debts_phenix_sync": {"roles": ("admin", "accounting")},  # upload the Phenix debts export
     "debts_payments": {"inherit": ("debts", "view")},
     "debts_payment_cancel": {"inherit": ("debts", "delete")},
     "debts_handover": {"inherit": ("debts", "delete")},
