@@ -43,6 +43,9 @@ class ActivityEvent(BaseModel):
     remaining_amount: Optional[float] = None
     visit_type: Optional[str] = None
     collection_date: Optional[date_type] = None
+    # visit reports: the pharmacy the doctor was visited about and the item presented
+    pharmacy_name: Optional[str] = None
+    item_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -198,6 +201,8 @@ async def _build_timeline(
             notes=l.details,
             visit_type=l.visit_type,
             collection_date=l.collection_date,
+            pharmacy_name=(l.pharmacy_name or None),
+            item_name=(l.item_name or None),
         ))
 
     events.sort(key=_sort_key, reverse=True)

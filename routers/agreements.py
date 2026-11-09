@@ -24,6 +24,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/entities/agreements", tags=["agreements"])
 
 
+async def ensure_no_active_conflict(
+    db: AsyncSession, pharmacy_id: int, product_id: int, status: Optional[str], exclude_id: Optional[int] = None
+) -> None:
+    """An item can be under the deal of ONE doctor at a pharmacy: the deal amount of every sale of it there
+    goes to that doctor. A second active agreement for the same pharmacy and item is refused, naming the
+    doctor who already has it (the order screen and the doctor's account rely on this)."""
+    if (status or "active") != "active":
+        return
+    query = select(Agreements).where(
+        Agreements.pharmacy_id == pharmacy_id,
+        Agreements.product_id == product_id,
+        Agreements.status == "active",
+    )
+    if exclude_id is not None:
+        query = query.where(Agreements.id != exclude_id)
+    other = (await db.execute(query)).scalars().first()
+    if other is None:
+        return
+    doctor = (await db.execute(select(Doctors.name).where(Doctors.id == other.doctor_id))).scalar_one_or_none()
+    raise HTTPException(
+        status_code=409,
+        detail=f"يوجد اتفاق فعّال على هذا الصنف مع هذه الصيدلية مع الطبيب «{doctor or other.doctor_id}»؛ أوقفه أو عدّله أولاً",
+    )
+
+
 # ---------- Pydantic Schemas ----------
 class AgreementsData(BaseModel):
     """Entity data schema (for create/update)"""
@@ -164,8 +189,8 @@ async def check_agreement(
                 Agreements.status == "active",
             )
         )
-        result = await db.execute(query)
-        agreement = result.scalar_one_or_none()
+        result = await db.execute(query.order_by(Agreements.id.desc()))
+        agreement = result.scalars().first()
 
         if not agreement:
             return None
@@ -327,6 +352,7 @@ async def create_agreements(
     agreements page — this endpoint previously had no auth at all)"""
     await require_permission(db, current_user, "agreements", "add")
     logger.debug(f"Creating new agreements with data: {data}")
+    await ensure_no_active_conflict(db, data.pharmacy_id, data.product_id, data.status)
 
     service = AgreementsService(db)
     try:
@@ -355,9 +381,18 @@ async def create_agreementss_batch(
     await require_permission(db, current_user, "agreements", "add")
     logger.debug(f"Batch creating {len(request.items)} agreementss")
 
+    seen = set()
+    for item_data in request.items:
+        await ensure_no_active_conflict(db, item_data.pharmacy_id, item_data.product_id, item_data.status)
+        if (item_data.status or "active") == "active":
+            pair = (item_data.pharmacy_id, item_data.product_id)
+            if pair in seen:
+                raise HTTPException(status_code=409, detail="الطلب يحتوي اتفاقين فعّالين على الصنف نفسه مع الصيدلية نفسها")
+            seen.add(pair)
+
     service = AgreementsService(db)
     results = []
-    
+
     try:
         for item_data in request.items:
             result = await service.create(item_data.model_dump())
@@ -390,12 +425,24 @@ async def update_agreementss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
+            current = await service.get_by_id(item.id)
+            if current is not None:
+                await ensure_no_active_conflict(
+                    db,
+                    update_dict.get("pharmacy_id", current.pharmacy_id),
+                    update_dict.get("product_id", current.product_id),
+                    update_dict.get("status", current.status),
+                    exclude_id=item.id,
+                )
             result = await service.update(item.id, update_dict)
             if result:
                 results.append(result)
         
         logger.info(f"Batch updated {len(results)} agreementss successfully")
         return results
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
@@ -418,6 +465,15 @@ async def update_agreements(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
+        current = await service.get_by_id(id)
+        if current is not None:
+            await ensure_no_active_conflict(
+                db,
+                update_dict.get("pharmacy_id", current.pharmacy_id),
+                update_dict.get("product_id", current.product_id),
+                update_dict.get("status", current.status),
+                exclude_id=id,
+            )
         result = await service.update(id, update_dict)
         if not result:
             logger.warning(f"Agreements with id {id} not found for update")
