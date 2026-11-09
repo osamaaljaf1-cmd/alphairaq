@@ -176,10 +176,20 @@ class VisitCountBucket(BaseModel):
     total: int = 0
 
 
+class VisitRepRow(BaseModel):
+    """One representative's visit counts (the dashboard's per-rep breakdown)."""
+    user_id: str
+    name: str
+    today: VisitCountBucket
+    yesterday: VisitCountBucket
+    month: VisitCountBucket
+
+
 class VisitCountsResponse(BaseModel):
     today: VisitCountBucket
     yesterday: VisitCountBucket
     month: VisitCountBucket
+    reps: List[VisitRepRow] = []
 
 
 _IRAQ_TZ = timezone(timedelta(hours=3))  # Baghdad, no DST
@@ -202,7 +212,7 @@ async def get_visit_counts(
     month_start = today_start.replace(day=1)
     earliest = min(month_start, yesterday_start)
 
-    query = select(Activity_logs.type, Activity_logs.timestamp).where(
+    query = select(Activity_logs.type, Activity_logs.timestamp, Activity_logs.user_id).where(
         Activity_logs.type.in_(["pharmacy_visit", "doctor_visit"]),
         Activity_logs.timestamp >= earliest,
     )
@@ -226,15 +236,64 @@ async def get_visit_counts(
             bucket.doctor += 1
         bucket.total += 1
 
-    for visit_type, ts in result.all():
+    per_user: dict[str, dict[str, VisitCountBucket]] = {}
+
+    def user_buckets(uid: str) -> dict[str, VisitCountBucket]:
+        return per_user.setdefault(uid, {k: VisitCountBucket() for k in ("today", "yesterday", "month")})
+
+    for visit_type, ts, uid in result.all():
         if ts is None:
             continue
         local = ts.astimezone(_IRAQ_TZ)
+        mine = user_buckets(uid) if uid else None
         if local >= today_start:
             add(counts["today"], visit_type)
+            if mine:
+                add(mine["today"], visit_type)
         elif local >= yesterday_start:
             add(counts["yesterday"], visit_type)
+            if mine:
+                add(mine["yesterday"], visit_type)
         if local >= month_start:
             add(counts["month"], visit_type)
+            if mine:
+                add(mine["month"], visit_type)
 
-    return VisitCountsResponse(**counts)
+    # Every representative in scope is listed (also those with no visits yet), the rest by visit.
+    from models.app_users import App_users
+
+    names: dict[str, str] = {}
+    reps_query = select(Representatives.id, Representatives.user_id, Representatives.name).where(
+        Representatives.role == "rep"
+    )
+    for rid, uid, name in (await db.execute(reps_query.order_by(Representatives.id))).all():
+        if not uid:
+            continue
+        if not scope.unrestricted and rid not in scope.rep_ids:
+            continue
+        names[uid] = (name or "").strip()
+        user_buckets(uid)
+    missing = [u for u in per_user if not names.get(u)]
+    if missing:
+        for uid, name in (
+            await db.execute(select(App_users.user_id, App_users.name).where(App_users.user_id.in_(missing)))
+        ).all():
+            if name and name.strip():
+                names[uid] = name.strip()
+        for uid, name in (
+            await db.execute(
+                select(Representatives.user_id, Representatives.name)
+                .where(Representatives.user_id.in_(missing))
+                .order_by(Representatives.id.desc())
+            )
+        ).all():
+            if name and name.strip() and not names.get(uid):
+                names[uid] = name.strip()
+
+    rows = [
+        VisitRepRow(user_id=uid, name=names.get(uid) or uid, **b)
+        for uid, b in per_user.items()
+    ]
+    rows.sort(key=lambda r: (-r.month.total, -r.today.total, r.name))
+
+    return VisitCountsResponse(**counts, reps=rows)
