@@ -157,6 +157,27 @@ async def get_rep_scope(db: AsyncSession, rep_id: int) -> CustomerScope:
     return CustomerScope(unrestricted=False, area_ids=area_ids, rep_ids=[rep_id])
 
 
+async def get_scoped_pharmacy_list(db: AsyncSession, scope: "CustomerScope") -> list[str]:
+    """The registered names (as written, cleaned) of every pharmacy visible under this scope —
+    all of them when the scope is unrestricted. The display twin of get_scoped_pharmacy_names."""
+    query = select(Pharmacies.name).where(Pharmacies.name.isnot(None))
+    if not scope.unrestricted:
+        if not scope.area_ids and not scope.rep_ids:
+            return []
+        query = query.where(
+            or_(
+                Pharmacies.area_id.in_(scope.area_ids) if scope.area_ids else false(),
+                Pharmacies.representative_id.in_(scope.rep_ids) if scope.rep_ids else false(),
+            )
+        )
+    seen: dict[str, str] = {}
+    for (name,) in (await db.execute(query)).all():
+        cleaned = clean_name(name)
+        if cleaned:
+            seen.setdefault(normalize_name(cleaned), cleaned)
+    return sorted(seen.values())
+
+
 async def get_scoped_pharmacy_names(db: AsyncSession, scope: "CustomerScope") -> Optional[set[str]]:
     """Resolve the pharmacy names (trimmed, lowercased, spaces collapsed) visible under this
     scope, for matching against free-text fields that store a customer name

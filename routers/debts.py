@@ -24,7 +24,7 @@ from models.payment_receipt_notes import PaymentReceiptNotes
 from schemas.auth import UserResponse
 from services.debts import DebtsService
 from services.permission_check import require_permission, resolve_user_role
-from services.area_scope import get_customer_scope, get_rep_scope, get_scoped_pharmacy_names
+from services.area_scope import get_customer_scope, get_rep_scope, get_scoped_pharmacy_list, get_scoped_pharmacy_names
 from services.customer_names import PharmacyIndex, name_sql, normalize_name, pharmacy_index
 from services.feature_permissions import require_feature
 
@@ -202,18 +202,23 @@ async def _visible_customer_names(db: AsyncSession, current_user: UserResponse):
     return await get_scoped_pharmacy_names(db, scope)
 
 
-async def _names_for_request(db: AsyncSession, current_user: UserResponse, rep_id: Optional[int]):
-    """Customer names the caller may list. Without ``rep_id`` that is the
+async def _scope_for_request(db: AsyncSession, current_user: UserResponse, rep_id: Optional[int]):
+    """The customer scope the caller may list. Without ``rep_id`` that is the
     caller's own scope. With ``rep_id`` it is that one representative's scope
     (their areas + customers) — allowed for admin/accounting and other
     unrestricted roles, for a manager only on their own reps, and for a rep
     only on themself."""
     caller = await get_customer_scope(db, current_user)
     if rep_id is None:
-        return await get_scoped_pharmacy_names(db, caller)
+        return caller
     if not caller.unrestricted and rep_id not in caller.rep_ids:
         raise HTTPException(status_code=403, detail="هذا المندوب خارج نطاق صلاحياتك")
-    return await get_scoped_pharmacy_names(db, await get_rep_scope(db, rep_id))
+    return await get_rep_scope(db, rep_id)
+
+
+async def _names_for_request(db: AsyncSession, current_user: UserResponse, rep_id: Optional[int]):
+    """Normalized customer names the caller may list (None = everything); see _scope_for_request."""
+    return await get_scoped_pharmacy_names(db, await _scope_for_request(db, current_user, rep_id))
 
 
 def _unknown_customer_detail(index: PharmacyIndex, name: str) -> str:
@@ -387,6 +392,32 @@ async def get_customer_names(
     service = DebtsService(db)
     scoped_names = await _names_for_request(db, current_user, rep_id)
     return await service.get_customer_names(customer_search=customer_search, scoped_names=scoped_names)
+
+
+@router.get("/customers-without-debts", response_model=List[str])
+async def get_customers_without_debts(
+    customer_search: str = Query(None, description="Partial, case-insensitive search on customer name"),
+    rep_id: Optional[int] = Query(None, description="Only this representative's customers"),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """The registered customers within the caller's scope (or one rep's) that have no debt at all,
+    so the debts page can list every customer, also those who owe nothing. Same scoping as the
+    debts list."""
+    from sqlalchemy import select
+
+    scope = await _scope_for_request(db, current_user, rep_id)
+    indebted = {
+        normalize_name(name)
+        for (name,) in (await db.execute(select(Debts.customer_name).distinct())).all()
+        if name
+    }
+    search = normalize_name(customer_search) if customer_search else ""
+    return [
+        name
+        for name in await get_scoped_pharmacy_list(db, scope)
+        if normalize_name(name) not in indebted and (not search or search in normalize_name(name))
+    ]
 
 
 @router.get("/unpaid/{customer_name}", response_model=List[DebtResponse])
