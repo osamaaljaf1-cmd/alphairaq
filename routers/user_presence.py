@@ -113,7 +113,7 @@ async def query_user_presences(
         raise
     except Exception as e:
         logger.error(f"Error querying user_presences: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/all", response_model=User_presenceListResponse)
@@ -152,7 +152,7 @@ async def query_user_presences_all(
         raise
     except Exception as e:
         logger.error(f"Error querying user_presences: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{id}", response_model=User_presenceResponse)
@@ -177,7 +177,7 @@ async def get_user_presence(
         raise
     except Exception as e:
         logger.error(f"Error fetching user_presence {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("", response_model=User_presenceResponse, status_code=201)
@@ -202,7 +202,7 @@ async def create_user_presence(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating user_presence: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/batch", response_model=List[User_presenceResponse], status_code=201)
@@ -228,7 +228,7 @@ async def create_user_presences_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch create failed")
 
 
 @router.put("/batch", response_model=List[User_presenceResponse])
@@ -256,7 +256,7 @@ async def update_user_presences_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch update failed")
 
 
 @router.put("/{id}", response_model=User_presenceResponse)
@@ -287,7 +287,7 @@ async def update_user_presence(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating user_presence {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/batch")
@@ -313,7 +313,7 @@ async def delete_user_presences_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch delete failed")
 
 
 @router.delete("/{id}")
@@ -338,4 +338,4 @@ async def delete_user_presence(
         raise
     except Exception as e:
         logger.error(f"Error deleting user_presence {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

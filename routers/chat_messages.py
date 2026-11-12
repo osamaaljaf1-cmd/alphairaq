@@ -122,7 +122,7 @@ async def query_chat_messagess(
         raise
     except Exception as e:
         logger.error(f"Error querying chat_messagess: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/all", response_model=Chat_messagesListResponse)
@@ -161,7 +161,7 @@ async def query_chat_messagess_all(
         raise
     except Exception as e:
         logger.error(f"Error querying chat_messagess: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{id}", response_model=Chat_messagesResponse)
@@ -186,7 +186,7 @@ async def get_chat_messages(
         raise
     except Exception as e:
         logger.error(f"Error fetching chat_messages {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("", response_model=Chat_messagesResponse, status_code=201)
@@ -211,7 +211,7 @@ async def create_chat_messages(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating chat_messages: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/batch", response_model=List[Chat_messagesResponse], status_code=201)
@@ -237,7 +237,7 @@ async def create_chat_messagess_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch create failed")
 
 
 @router.put("/batch", response_model=List[Chat_messagesResponse])
@@ -265,7 +265,7 @@ async def update_chat_messagess_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch update failed")
 
 
 @router.put("/{id}", response_model=Chat_messagesResponse)
@@ -296,7 +296,7 @@ async def update_chat_messages(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating chat_messages {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/batch")
@@ -322,7 +322,7 @@ async def delete_chat_messagess_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch delete failed")
 
 
 @router.delete("/{id}")
@@ -347,4 +347,4 @@ async def delete_chat_messages(
         raise
     except Exception as e:
         logger.error(f"Error deleting chat_messages {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

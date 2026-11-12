@@ -118,7 +118,7 @@ async def query_app_userss(
         raise
     except Exception as e:
         logger.error(f"Error querying app_userss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/all", response_model=App_usersListResponse)
@@ -156,7 +156,7 @@ async def query_app_userss_all(
         raise
     except Exception as e:
         logger.error(f"Error querying app_userss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{id}", response_model=App_usersResponse)
@@ -181,7 +181,7 @@ async def get_app_users(
         raise
     except Exception as e:
         logger.error(f"Error fetching app_users {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("", response_model=App_usersResponse, status_code=201)
@@ -207,7 +207,7 @@ async def create_app_users(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating app_users: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/batch", response_model=List[App_usersResponse], status_code=201)
@@ -234,7 +234,7 @@ async def create_app_userss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch create failed")
 
 
 @router.put("/batch", response_model=List[App_usersResponse])
@@ -263,7 +263,7 @@ async def update_app_userss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch update failed")
 
 
 @router.put("/{id}", response_model=App_usersResponse)
@@ -295,7 +295,7 @@ async def update_app_users(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating app_users {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/batch")
@@ -322,7 +322,7 @@ async def delete_app_userss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch delete failed")
 
 
 @router.delete("/{id}")
@@ -348,4 +348,4 @@ async def delete_app_users(
         raise
     except Exception as e:
         logger.error(f"Error deleting app_users {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

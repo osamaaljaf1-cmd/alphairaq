@@ -137,7 +137,7 @@ async def query_doctorss(
         raise
     except Exception as e:
         logger.error(f"Error querying doctorss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/all", response_model=DoctorsListResponse)
@@ -178,7 +178,7 @@ async def query_doctorss_all(
         raise
     except Exception as e:
         logger.error(f"Error querying doctorss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{id}", response_model=DoctorsResponse)
@@ -203,7 +203,7 @@ async def get_doctors(
         raise
     except Exception as e:
         logger.error(f"Error fetching doctors {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("", response_model=DoctorsResponse, status_code=201)
@@ -243,7 +243,7 @@ async def create_doctors(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating doctors: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/batch", response_model=List[DoctorsResponse], status_code=201)
@@ -293,7 +293,7 @@ async def create_doctorss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch create failed")
 
 
 @router.put("/batch", response_model=List[DoctorsResponse])
@@ -324,7 +324,7 @@ async def update_doctorss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch update failed")
 
 
 @router.put("/{id}", response_model=DoctorsResponse)
@@ -360,7 +360,7 @@ async def update_doctors(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating doctors {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/batch")
@@ -388,7 +388,7 @@ async def delete_doctorss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch delete failed")
 
 
 @router.delete("/{id}")
@@ -415,4 +415,4 @@ async def delete_doctors(
         raise
     except Exception as e:
         logger.error(f"Error deleting doctors {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -139,7 +139,7 @@ async def query_pharmaciess(
         raise
     except Exception as e:
         logger.error(f"Error querying pharmaciess: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/all", response_model=PharmaciesListResponse)
@@ -183,7 +183,7 @@ async def query_pharmaciess_all(
         raise
     except Exception as e:
         logger.error(f"Error querying pharmaciess: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/near-doctor", response_model=List[PharmaciesResponse])
@@ -223,7 +223,7 @@ async def get_near_pharmacies(
         raise
     except Exception as e:
         logger.error(f"Error finding near pharmacies: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/link-areas")
@@ -287,7 +287,7 @@ async def get_pharmacies(
         raise
     except Exception as e:
         logger.error(f"Error fetching pharmacies {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def _checked_name(db: AsyncSession, name: str, own_id: Optional[int] = None) -> str:
@@ -356,7 +356,7 @@ async def create_pharmacies(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating pharmacies: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/batch", response_model=List[PharmaciesResponse], status_code=201)
@@ -409,7 +409,7 @@ async def create_pharmaciess_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch create failed")
 
 
 @router.put("/batch", response_model=List[PharmaciesResponse])
@@ -440,7 +440,7 @@ async def update_pharmaciess_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch update failed")
 
 
 @router.put("/{id}", response_model=PharmaciesResponse)
@@ -474,7 +474,7 @@ async def update_pharmacies(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating pharmacies {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/batch")
@@ -502,7 +502,7 @@ async def delete_pharmaciess_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch delete failed")
 
 
 @router.delete("/{id}")
@@ -529,4 +529,4 @@ async def delete_pharmacies(
         raise
     except Exception as e:
         logger.error(f"Error deleting pharmacies {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

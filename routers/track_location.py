@@ -70,4 +70,4 @@ async def track_location(
         raise
     except Exception as e:
         logger.error(f"Error tracking location: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -47,7 +47,7 @@ async def record_login(
         return result
     except Exception as e:
         logger.error(f"Error recording login: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/record-logout")
@@ -62,7 +62,7 @@ async def record_logout(
         return result
     except Exception as e:
         logger.error(f"Error recording logout: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/stats", response_model=UsageStatsResponse)
@@ -89,4 +89,4 @@ async def get_usage_stats(
         return result
     except Exception as e:
         logger.error(f"Error getting usage stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

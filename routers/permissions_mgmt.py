@@ -127,7 +127,7 @@ async def list_permissions(
         return PermissionsListResponse(items=items)
     except Exception as e:
         logger.error(f"Error listing permissions: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 class GetPermissionsByRoleRequest(BaseModel):
@@ -156,7 +156,7 @@ async def get_permissions_by_role(
         } for p in items]}
     except Exception as e:
         logger.error(f"Error getting permissions by role: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/update")
@@ -200,7 +200,7 @@ async def update_permissions(
         return {"success": True, "updated": updated}
     except Exception as e:
         logger.error(f"Error updating permissions: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ============================================================
@@ -220,7 +220,7 @@ async def list_areas(
         return AreasListResponse(items=items)
     except Exception as e:
         logger.error(f"Error listing areas: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/areas/create", response_model=AreaItem)
@@ -244,7 +244,7 @@ async def create_area(
         raise
     except Exception as e:
         logger.error(f"Error creating area: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/areas/{area_id}", response_model=AreaItem)
@@ -273,7 +273,7 @@ async def update_area(
         raise
     except Exception as e:
         logger.error(f"Error updating area: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/areas/delete/{area_id}")
@@ -295,7 +295,7 @@ async def delete_area(
         raise
     except Exception as e:
         logger.error(f"Error deleting area: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ============================================================
@@ -315,7 +315,7 @@ async def list_rep_areas(
         return RepAreasListResponse(items=items)
     except Exception as e:
         logger.error(f"Error listing rep areas: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/rep-areas/set")
@@ -353,4 +353,4 @@ async def set_rep_areas(
         raise
     except Exception as e:
         logger.error(f"Error setting rep areas: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

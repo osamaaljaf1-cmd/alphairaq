@@ -86,7 +86,7 @@ async def create_message(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error creating message: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/list")
@@ -128,4 +128,4 @@ async def list_messages(
         }
     except Exception as e:
         logger.error(f"Error listing messages: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

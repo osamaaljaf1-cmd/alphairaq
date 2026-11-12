@@ -1,9 +1,10 @@
 import logging
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from core import login_throttle
 from services.access import require_admin
 from schemas.auth import UserResponse
 from dependencies.auth import get_current_user
@@ -36,9 +37,16 @@ class LoginResponse(BaseModel):
 @router.post("/login", response_model=LoginResponse)
 async def login(
     data: LoginRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """Authenticate user with email and password (bcrypt)"""
+    account = login_throttle.normalise_account(data.email)
+    address = login_throttle.client_address(request)
+    wait = login_throttle.seconds_locked(account, address)
+    if wait:
+        minutes = max(1, (wait + 59) // 60)
+        raise HTTPException(status_code=429, detail=f"محاولات دخول خاطئة كثيرة. حاول بعد {minutes} دقيقة")
     try:
         service = App_usersService(db)
         user = await service.get_by_field("email", data.email.strip().lower())
@@ -48,13 +56,17 @@ async def login(
             user = await service.get_by_field("email", data.email.strip())
 
         if not user:
+            login_throttle.record_failure(account, address)
             raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غير صحيحة")
 
         if not user.password_hash:
             raise HTTPException(status_code=401, detail="هذا الحساب لا يدعم تسجيل الدخول بكلمة المرور")
 
         if not verify_password(data.password, user.password_hash):
+            login_throttle.record_failure(account, address)
             raise HTTPException(status_code=401, detail="اسم المستخدم أو كلمة المرور غير صحيحة")
+
+        login_throttle.record_success(account)
 
         # Auto-upgrade legacy SHA-256 hash to bcrypt on successful login
         if is_legacy_hash(user.password_hash):

@@ -298,6 +298,8 @@ async def seed_permissions(
     endpoint is called on every /permissions page load, so 100+ sequential
     queries was adding tens of seconds to the page load).
     """
+    # It writes the permission matrix: any logged-in user used to be able to call it.
+    await require_admin(db, current_user, strict=True)
     results = []
 
     # Custom roles (added via /api/v1/custom-roles) also need a row per page —
@@ -403,6 +405,8 @@ async def grant_visit_permissions(
     missing records for any role that doesn't have them yet.
     Idempotent - safe to call multiple times.
     """
+    # It writes the permission matrix: any logged-in user used to be able to call it.
+    await require_admin(db, current_user, strict=True)
     results = []
 
     # Step 1: Update existing records where can_view is False

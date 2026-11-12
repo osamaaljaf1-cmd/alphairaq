@@ -159,7 +159,7 @@ async def query_returnss(
         raise
     except Exception as e:
         logger.error(f"Error querying returnss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/all", response_model=ReturnsListResponse)
@@ -200,7 +200,7 @@ async def query_returnss_all(
         raise
     except Exception as e:
         logger.error(f"Error querying returnss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{id}", response_model=ReturnsResponse)
@@ -225,7 +225,7 @@ async def get_returns(
         raise
     except Exception as e:
         logger.error(f"Error fetching returns {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("", response_model=ReturnsResponse, status_code=201)
@@ -250,7 +250,7 @@ async def create_returns(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating returns: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/batch", response_model=List[ReturnsResponse], status_code=201)
@@ -276,7 +276,7 @@ async def create_returnss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch create failed")
 
 
 @router.put("/batch", response_model=List[ReturnsResponse])
@@ -304,7 +304,7 @@ async def update_returnss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch update failed")
 
 
 @router.put("/{id}", response_model=ReturnsResponse)
@@ -335,7 +335,7 @@ async def update_returns(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating returns {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/batch")
@@ -365,7 +365,7 @@ async def delete_returnss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch delete failed")
 
 
 @router.delete("/{id}")
@@ -394,7 +394,7 @@ async def delete_returns(
         raise
     except Exception as e:
         logger.error(f"Error deleting returns {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------- Apply return to customer debts ----------
@@ -486,7 +486,7 @@ async def apply_return_to_debts(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error applying return {id} to debts: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     logger.info(f"Return {id} applied to {applied_count} debt(s), total {total_applied}")
     return ApplyToDebtsResponse(applied_count=applied_count, total_applied=total_applied)
@@ -692,4 +692,4 @@ async def process_agreement_message(
         raise
     except Exception as e:
         logger.error(f"Error processing agreement message for return {id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"خطأ في معالجة رسالة الاتفاقية: {str(e)}")
+        raise HTTPException(status_code=500, detail="خطأ في معالجة رسالة الاتفاقية")

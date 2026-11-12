@@ -103,7 +103,7 @@ async def setup_admin(
     except Exception as e:
         await db.rollback()
         logger.error(f"Bootstrap error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/seed-admin", response_model=BootstrapResponse)
@@ -189,7 +189,7 @@ async def seed_admin(
     except Exception as e:
         await db.rollback()
         logger.error(f"Seed admin error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/check-admin", response_model=dict)

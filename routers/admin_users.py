@@ -10,7 +10,7 @@ from core.database import get_db
 from core.password import hash_password
 from services.app_users import App_usersService
 from services.representatives import RepresentativesService
-from dependencies.auth import get_current_user
+from dependencies.auth import forget_account_status, get_current_user
 from schemas.auth import UserResponse
 
 logger = logging.getLogger(__name__)
@@ -120,7 +120,7 @@ async def local_list_users(
         return UsersListResponse(items=items, total=total)
     except Exception as e:
         logger.error(f"Error listing users: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"خطأ في النظام: {str(e)}")
+        raise HTTPException(status_code=500, detail="خطأ في النظام")
 
 
 @router.post("/local-create-user", response_model=CreateUserResponse)
@@ -177,7 +177,7 @@ async def local_create_user(
         raise
     except Exception as e:
         logger.error(f"Error creating user: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"خطأ في النظام: {str(e)}")
+        raise HTTPException(status_code=500, detail="خطأ في النظام")
 
 
 @router.put("/local-update/{user_id}", response_model=UserItem)
@@ -231,6 +231,11 @@ async def local_update_user(
         except Exception as rep_err:
             logger.warning(f"Failed to update representative record: {rep_err}")
 
+        # a block / unblock applies at once (the account status is cached for a minute)
+        updated_row = await service.get_by_id(user_id)
+        if updated_row:
+            forget_account_status(updated_row.user_id)
+
         logger.info(f"User {user_id} updated via local auth: {update_dict}")
         return result
 
@@ -238,7 +243,7 @@ async def local_update_user(
         raise
     except Exception as e:
         logger.error(f"Error updating user: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"خطأ في النظام: {str(e)}")
+        raise HTTPException(status_code=500, detail="خطأ في النظام")
 
 
 @router.post("/local-change-password/{user_id}")
@@ -273,7 +278,7 @@ async def local_change_password(
         raise
     except Exception as e:
         logger.error(f"Error changing password: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"خطأ في النظام: {str(e)}")
+        raise HTTPException(status_code=500, detail="خطأ في النظام")
 
 
 @router.delete("/local-delete/{user_id}")
@@ -308,6 +313,7 @@ async def local_delete_user(
 
         # Delete the user
         await service.delete(user_id)
+        forget_account_status(user_record.user_id)
 
         logger.info(f"User {user_id} ({user_record.email}) deleted by admin {data.admin_user_id}")
         return {"success": True, "message": "تم حذف المستخدم بنجاح"}
@@ -316,7 +322,7 @@ async def local_delete_user(
         raise
     except Exception as e:
         logger.error(f"Error deleting user: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"خطأ في النظام: {str(e)}")
+        raise HTTPException(status_code=500, detail="خطأ في النظام")
 
 
 # ============================================================
@@ -379,7 +385,7 @@ async def create_user(
         raise
     except Exception as e:
         logger.error(f"Error creating user: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("", response_model=UsersListResponse)
@@ -409,7 +415,7 @@ async def list_users(
         raise
     except Exception as e:
         logger.error(f"Error listing users: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/{user_id}", response_model=UserItem)
@@ -446,4 +452,4 @@ async def update_user(
         raise
     except Exception as e:
         logger.error(f"Error updating user: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

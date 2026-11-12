@@ -186,7 +186,7 @@ async def log_doctor_visit(
         raise
     except Exception as e:
         logger.error(f"Error logging doctor visit: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/pharmacy-visit", response_model=Activity_logsResponse, status_code=201)
@@ -227,7 +227,7 @@ async def log_pharmacy_visit(
         raise
     except Exception as e:
         logger.error(f"Error logging pharmacy visit: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("", response_model=Activity_logsListResponse)
@@ -266,7 +266,7 @@ async def query_activity_logss(
         raise
     except Exception as e:
         logger.error(f"Error querying activity_logss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/all", response_model=Activity_logsListResponse)
@@ -308,7 +308,7 @@ async def query_activity_logss_all(
         raise
     except Exception as e:
         logger.error(f"Error querying activity_logss: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{id}", response_model=Activity_logsResponse)
@@ -333,7 +333,7 @@ async def get_activity_logs(
         raise
     except Exception as e:
         logger.error(f"Error fetching activity_logs {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("", response_model=Activity_logsResponse, status_code=201)
@@ -358,7 +358,7 @@ async def create_activity_logs(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating activity_logs: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/batch", response_model=List[Activity_logsResponse], status_code=201)
@@ -384,7 +384,7 @@ async def create_activity_logss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch create failed")
 
 
 @router.put("/batch", response_model=List[Activity_logsResponse])
@@ -412,7 +412,7 @@ async def update_activity_logss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch update failed")
 
 
 @router.put("/{id}", response_model=Activity_logsResponse)
@@ -443,7 +443,7 @@ async def update_activity_logs(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating activity_logs {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/batch")
@@ -469,7 +469,7 @@ async def delete_activity_logss_batch(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Batch delete failed")
 
 
 @router.delete("/{id}")
@@ -494,4 +494,4 @@ async def delete_activity_logs(
         raise
     except Exception as e:
         logger.error(f"Error deleting activity_logs {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")

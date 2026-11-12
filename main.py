@@ -37,8 +37,11 @@ def setup_logging():
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     # Configure the root logger
+    # DEBUG logged every request payload and every query's data (customer names, amounts, ids) into the
+    # platform logs; INFO is the default now, LOG_LEVEL=DEBUG brings it back when investigating.
+    log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=log_level,
         format=log_format,
         handlers=[
             # File handler
@@ -49,14 +52,16 @@ def setup_logging():
     )
 
     # Set log levels for specific modules
-    logging.getLogger("uvicorn").setLevel(logging.DEBUG)
-    logging.getLogger("fastapi").setLevel(logging.DEBUG)
+    logging.getLogger("uvicorn").setLevel(log_level)
+    logging.getLogger("fastapi").setLevel(log_level)
+    # keep the query driver quiet even in DEBUG: it prints every SQL statement with its parameters
+    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
     # Log configuration details
     logger = logging.getLogger(__name__)
     logger.info("=== Logging system initialized ===")
     logger.info(f"Log file: {log_file}")
-    logger.info("Log level: INFO")
+    logger.info(f"Log level: {logging.getLevelName(log_level)}")
     logger.info(f"Timestamp: {timestamp}")
 
 

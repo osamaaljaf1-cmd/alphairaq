@@ -1,12 +1,17 @@
 import hashlib
 import logging
+import time
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from core.auth import AccessTokenError, decode_access_token
+from core.database import get_db
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from models.app_users import App_users
 from schemas.auth import UserResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +29,40 @@ async def get_bearer_token(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication credentials were not provided")
 
 
-async def get_current_user(token: str = Depends(get_bearer_token)) -> UserResponse:
+# A token lives 7 days, so a blocked / deactivated account kept working until it ran out.
+# The account's status is looked up (cached for a minute: one query per user per minute at most).
+_BLOCKED_STATUSES = {"blocked", "inactive"}
+_STATUS_TTL_SECONDS = 60.0
+_status_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+
+
+async def _account_status(db: AsyncSession, user_id: str) -> Optional[str]:
+    """The app account's status, or None when there is no such row (service / bootstrap accounts)."""
+    now = time.monotonic()
+    hit = _status_cache.get(user_id)
+    if hit and now - hit[0] < _STATUS_TTL_SECONDS:
+        return hit[1]
+    try:
+        row = (await db.execute(select(App_users.status).where(App_users.user_id == user_id).limit(1))).first()
+    except Exception:  # never lock everybody out because the lookup failed
+        logger.warning("Account status lookup failed", exc_info=True)
+        return None
+    status_value = row[0] if row else None
+    if len(_status_cache) > 5000:
+        _status_cache.clear()
+    _status_cache[user_id] = (now, status_value)
+    return status_value
+
+
+def forget_account_status(user_id: Optional[str] = None) -> None:
+    """Drop the cached status (after the admin blocks / unblocks an account) so it applies at once."""
+    if user_id is None:
+        _status_cache.clear()
+    else:
+        _status_cache.pop(str(user_id), None)
+
+
+async def get_current_user(token: str = Depends(get_bearer_token), db: AsyncSession = Depends(get_db)) -> UserResponse:
     """Dependency to get current authenticated user via JWT token."""
     try:
         payload = decode_access_token(token)
@@ -36,6 +74,9 @@ async def get_current_user(token: str = Depends(get_bearer_token)) -> UserRespon
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token")
+
+    if (await _account_status(db, str(user_id))) in _BLOCKED_STATUSES:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="هذا الحساب موقوف. تواصل مع المسؤول")
 
     last_login_raw = payload.get("last_login")
     last_login = None

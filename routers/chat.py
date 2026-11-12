@@ -148,7 +148,7 @@ async def send_message(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error sending message: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/conversation", response_model=ConversationListResponse)
@@ -214,7 +214,7 @@ async def get_conversation(
         return ConversationListResponse(items=items, total=total)
     except Exception as e:
         logger.error(f"Error getting conversation: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------- Groups ----------
@@ -263,7 +263,7 @@ async def create_group(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error creating group: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/groups", response_model=list[GroupResponse])
@@ -308,7 +308,7 @@ async def list_my_groups(
         ]
     except Exception as e:
         logger.error(f"Error listing groups: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/groups/{group_id}/messages", response_model=ConversationListResponse)
@@ -361,7 +361,7 @@ async def get_group_messages(
         raise
     except Exception as e:
         logger.error(f"Error getting group messages: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/groups/{group_id}/members", response_model=GroupMemberResponse, status_code=201)
@@ -392,7 +392,7 @@ async def add_group_member(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error adding group member: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/groups/{group_id}/members/{user_id}", status_code=204)
@@ -428,7 +428,7 @@ async def remove_group_member(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error removing group member: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/team-messages", response_model=ConversationListResponse)
@@ -475,7 +475,7 @@ async def get_team_messages(
         return ConversationListResponse(items=items, total=total)
     except Exception as e:
         logger.error(f"Error getting team messages: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/recent-contacts", response_model=list[dict])
@@ -518,7 +518,7 @@ async def get_recent_contacts(
         return list(contacts.values())
     except Exception as e:
         logger.error(f"Error getting recent contacts: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/unread-count", response_model=UnreadCountResponse)
@@ -539,7 +539,7 @@ async def get_unread_count(
         return UnreadCountResponse(unread_count=count)
     except Exception as e:
         logger.error(f"Error getting unread count: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ---------- Presence ----------
@@ -586,7 +586,7 @@ async def heartbeat(
     except Exception as e:
         await db.rollback()
         logger.error(f"Error updating presence: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/presence/online", response_model=list[PresenceResponse])
@@ -627,4 +627,4 @@ async def get_online_users(
         return items
     except Exception as e:
         logger.error(f"Error getting online users: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

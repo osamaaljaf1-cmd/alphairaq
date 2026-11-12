@@ -104,7 +104,7 @@ async def get_settings(current_user: UserResponse = Depends(get_admin_user)):
 
         return EnvConfig(backend_vars=backend_config, frontend_vars=frontend_config)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read configuration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to read configuration")
 
 
 @router.put("/backend/{key}")
@@ -118,7 +118,7 @@ async def update_backend_setting(
         write_env_file("backend", env_vars)
         return {"message": f"Backend configuration '{key}' updated successfully; restart required to take effect."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update configuration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update configuration")
 
 
 @router.put("/frontend/{key}")
@@ -132,7 +132,7 @@ async def update_frontend_setting(
         write_env_file("frontend", env_vars)
         return {"message": f"Frontend configuration '{key}' updated successfully; restart required to take effect."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update configuration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update configuration")
 
 
 @router.post("/backend/{key}")
@@ -146,7 +146,7 @@ async def add_backend_setting(
         write_env_file("backend", env_vars)
         return {"message": f"Backend configuration '{key}' added successfully; restart required to take effect."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to add configuration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to add configuration")
 
 
 @router.post("/frontend/{key}")
@@ -160,7 +160,7 @@ async def add_frontend_setting(
         write_env_file("frontend", env_vars)
         return {"message": f"Frontend configuration '{key}' added successfully; restart required to take effect."}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to add configuration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to add configuration")
 
 
 @router.delete("/backend/{key}")
@@ -175,7 +175,7 @@ async def delete_backend_setting(key: str, current_user: UserResponse = Depends(
         else:
             raise HTTPException(status_code=404, detail=f"Configuration item '{key}' does not exist")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete configuration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete configuration")
 
 
 @router.delete("/frontend/{key}")
@@ -190,4 +190,4 @@ async def delete_frontend_setting(key: str, current_user: UserResponse = Depends
         else:
             raise HTTPException(status_code=404, detail=f"Configuration item '{key}' does not exist")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete configuration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to delete configuration")
