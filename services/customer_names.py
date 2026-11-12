@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.pharmacies import Pharmacies
 
 _SPACES_RE = re.compile(r"\s+")
-_TYPE_WORDS = {"صيدلية": "صيدلية", "صيدليه": "صيدلية", "مذخر": "مذخر"}
+_ODD_SPACES = (" ", "\t", "\n", "\r", " ", " ", " ", "　")
+_TYPE_WORDS ={"صيدلية": "صيدلية", "صيدليه": "صيدلية", "مذخر": "مذخر"}
 
 
 def clean_name(value: Optional[str]) -> str:
@@ -34,7 +35,13 @@ def normalize_name(value: Optional[str]) -> str:
 def name_sql(column):
     """SQL twin of normalize_name (lower + trim + up to 8 inner spaces
     collapsed) for comparing a name column against normalized names."""
-    spaced = func.replace(func.replace(func.replace(column, "  ", " "), "  ", " "), "  ", " ")
+    # Python's \s (used by clean_name) also matches the no-break space and the other unusual spaces
+    # that Excel / Phenix exports put inside names; trim() and "  " do not, so they are turned into a
+    # plain space first — otherwise "ربى عباس<NBSP>صيهود" never matched the registered customer in SQL.
+    plain = column
+    for odd in _ODD_SPACES:
+        plain = func.replace(plain, odd, " ")
+    spaced = func.replace(func.replace(func.replace(plain, "  ", " "), "  ", " "), "  ", " ")
     return func.lower(func.trim(spaced))
 
 
