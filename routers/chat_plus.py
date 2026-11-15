@@ -12,7 +12,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -21,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from models.app_users import App_users
-from models.chat_extras import Chat_message_extras, Chat_reads
+from models.chat_extras import Chat_attachments, Chat_message_extras, Chat_reads
 from models.chat_group_members import Chat_group_members
 from models.chat_groups import Chat_groups
 from models.chat_messages import Chat_messages
@@ -212,6 +213,53 @@ async def _extras(db: AsyncSession, ids) -> Dict[int, Chat_message_extras]:
     return {r.message_id: r for r in rows}
 
 
+IMAGE_PLACEHOLDER = "📷 صورة"
+AUDIO_PLACEHOLDER = "🎤 رسالة صوتية"
+IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+AUDIO_TYPES = {"audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/mp3", "audio/aac", "audio/x-m4a", "audio/m4a", "audio/wav", "audio/x-wav"}
+MAX_IMAGE_BYTES = 4 * 1024 * 1024
+MAX_AUDIO_BYTES = 6 * 1024 * 1024
+
+
+def _looks_like_image(data: bytes) -> bool:
+    return (
+        data.startswith(b"\xff\xd8\xff")  # jpeg
+        or data.startswith(b"\x89PNG\r\n\x1a\n")
+        or data.startswith(b"GIF87a")
+        or data.startswith(b"GIF89a")
+        or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")
+    )
+
+
+async def _attachment_meta(db: AsyncSession, ids) -> Dict[int, tuple]:
+    """{message id: (kind, mime, size, duration_ms, width, height, has_caption)} — never the bytes."""
+    ids = [i for i in set(ids) if i]
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(
+                Chat_attachments.message_id, Chat_attachments.kind, Chat_attachments.mime, Chat_attachments.size,
+                Chat_attachments.duration_ms, Chat_attachments.width, Chat_attachments.height, Chat_attachments.has_caption,
+            ).where(Chat_attachments.message_id.in_(ids))
+        )
+    ).all()
+    return {r[0]: tuple(r[1:]) for r in rows}
+
+
+async def _may_see_message(db: AsyncSession, me: str, msg: Chat_messages) -> bool:
+    if msg.receiver_id == TEAM:
+        return True
+    if msg.receiver_id.startswith(GROUP_PREFIX):
+        raw = msg.receiver_id[len(GROUP_PREFIX):]
+        if not raw.isdigit():
+            return False
+        return (
+            await db.execute(select(Chat_group_members.id).where(Chat_group_members.group_id == int(raw), Chat_group_members.user_id == me).limit(1))
+        ).first() is not None
+    return me in (msg.user_id, msg.receiver_id)
+
+
 def _snippet(text: Optional[str], n: int = 90) -> str:
     text = " ".join((text or "").split())
     return text if len(text) <= n else text[: n - 1] + "…"
@@ -226,6 +274,15 @@ class ReplyPreview(BaseModel):
     deleted: bool = False
 
 
+class Attachment(BaseModel):
+    kind: str  # image | audio
+    mime: str
+    size: int = 0
+    duration_ms: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+
+
 class ThreadMessage(BaseModel):
     id: int
     user_id: str
@@ -236,6 +293,7 @@ class ThreadMessage(BaseModel):
     is_read: bool = False
     deleted: bool = False
     reply_to: Optional[ReplyPreview] = None
+    attachment: Optional[Attachment] = None
 
 
 class Member(BaseModel):
@@ -268,6 +326,8 @@ class LastMessage(BaseModel):
     created_at: Optional[str] = None
     deleted: bool = False
     is_read: bool = False
+    attachment_kind: Optional[str] = None  # image | audio
+    duration_ms: Optional[int] = None
 
 
 class ChatItem(BaseModel):
@@ -322,20 +382,26 @@ async def list_chats(current_user: UserResponse = Depends(get_current_user), db:
     counts = dict((await db.execute(select(Chat_group_members.group_id, func.count(Chat_group_members.id)).where(Chat_group_members.group_id.in_(gids)).group_by(Chat_group_members.group_id))).all()) if gids else {}
     channel_last = {m.receiver_id: m for m in (await db.execute(select(Chat_messages).where(Chat_messages.id.in_(list(latest.values()))))).scalars().all()} if latest else {}
 
-    extras = await _extras(db, [p["last"].id for p in peers.values()] + [m.id for m in channel_last.values()])
+    last_ids = [p["last"].id for p in peers.values()] + [m.id for m in channel_last.values()]
+    extras = await _extras(db, last_ids)
+    media = await _attachment_meta(db, last_ids)
 
     def last_of(m: Optional[Chat_messages]) -> Optional[LastMessage]:
         if m is None:
             return None
         deleted = bool(extras.get(m.id) and extras[m.id].deleted_at)
+        att = media.get(m.id)
+        text = "" if deleted or (att and not att[6]) else _snippet(m.message_text)
         return LastMessage(
             id=m.id,
-            text="" if deleted else _snippet(m.message_text),
+            text=text,
             sender_name=m.sender_name or "",
             mine=m.user_id == me,
             created_at=_iso(m.created_at),
             deleted=deleted,
             is_read=bool(m.is_read),
+            attachment_kind=att[0] if att and not deleted else None,
+            duration_ms=att[3] if att and not deleted else None,
         )
 
     items: List[ChatItem] = []
@@ -415,6 +481,7 @@ async def get_thread(
     rows = list(reversed(rows[:limit]))
 
     extras = await _extras(db, [m.id for m in rows])
+    media = await _attachment_meta(db, [m.id for m in rows])
     reply_ids = [e.reply_to_id for e in extras.values() if e.reply_to_id]
     replied = {m.id: m for m in (await db.execute(select(Chat_messages).where(Chat_messages.id.in_(reply_ids)))).scalars().all()} if reply_ids else {}
     replied_extras = await _extras(db, replied.keys())
@@ -428,17 +495,22 @@ async def get_thread(
             r = replied[ex.reply_to_id]
             r_deleted = bool(replied_extras.get(r.id) and replied_extras[r.id].deleted_at)
             reply = ReplyPreview(id=r.id, sender_id=r.user_id, sender_name=r.sender_name or "", text="" if r_deleted else _snippet(r.message_text, 120), deleted=r_deleted)
+        att = media.get(m.id)
+        text = "" if deleted else (m.message_text or "")
+        if att and not att[6]:
+            text = ""  # a photo / voice note without a caption: the placeholder is for old screens only
         items.append(
             ThreadMessage(
                 id=m.id,
                 user_id=m.user_id,
                 sender_name=m.sender_name or "",
-                text="" if deleted else (m.message_text or ""),
+                text=text,
                 created_at=_iso(m.created_at),
                 mine=m.user_id == me,
                 is_read=bool(m.is_read),
                 deleted=deleted,
                 reply_to=reply,
+                attachment=None if (deleted or not att) else Attachment(kind=att[0], mime=att[1], size=att[2] or 0, duration_ms=att[3], width=att[4], height=att[5]),
             )
         )
 
@@ -506,8 +578,106 @@ async def delete_message(message_id: int, current_user: UserResponse = Depends(g
         db.add(Chat_message_extras(message_id=message_id, deleted_at=datetime.now(timezone.utc)))
     elif ex.deleted_at is None:
         ex.deleted_at = datetime.now(timezone.utc)
+    # a deleted photo / voice note is erased, not just hidden
+    await db.execute(update(Chat_attachments).where(Chat_attachments.message_id == message_id).values(data=None, size=0))
     await db.commit()
     return {"ok": True}
+
+
+# ---------- photos and voice notes ----------
+@router.post("/send-media", response_model=ThreadMessage, status_code=201)
+async def send_media(
+    receiver_id: str = Form(...),
+    receiver_name: str = Form(""),
+    kind: str = Form(...),
+    caption: str = Form(""),
+    reply_to_id: Optional[int] = Form(None),
+    duration_ms: Optional[int] = Form(None),
+    width: Optional[int] = Form(None),
+    height: Optional[int] = Form(None),
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a photo (already shrunk by the phone) or a voice note to a person, a group or the team."""
+    me = str(current_user.id)
+    await _authorize(db, me, receiver_id)
+    if kind not in ("image", "audio"):
+        raise HTTPException(status_code=400, detail="نوع الملف غير مدعوم")
+    mime = (file.content_type or "").split(";")[0].strip().lower()
+    limit = MAX_IMAGE_BYTES if kind == "image" else MAX_AUDIO_BYTES
+    if (kind == "image" and mime not in IMAGE_TYPES) or (kind == "audio" and mime not in AUDIO_TYPES):
+        raise HTTPException(status_code=400, detail="صيغة الملف غير مدعومة")
+    data = await file.read(limit + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="الملف فارغ")
+    if len(data) > limit:
+        raise HTTPException(status_code=413, detail="الملف كبير جداً")
+    if kind == "image" and not _looks_like_image(data):
+        raise HTTPException(status_code=400, detail="الملف ليس صورة")
+
+    caption = (caption or "").strip()[:4000]
+    reply_ok = None
+    if reply_to_id:
+        found = (await db.execute(select(Chat_messages.id).where(Chat_messages.id == reply_to_id, _thread_condition(me, receiver_id)))).first()
+        reply_ok = reply_to_id if found else None
+
+    now = datetime.now(timezone.utc)
+    msg = Chat_messages(
+        user_id=me,
+        sender_name=current_user.name or me[:8],
+        receiver_id=receiver_id,
+        receiver_name=receiver_name or None,
+        message_text=caption or (IMAGE_PLACEHOLDER if kind == "image" else AUDIO_PLACEHOLDER),
+        is_read=False,
+        created_at=now,
+    )
+    db.add(msg)
+    await db.flush()
+    db.add(
+        Chat_attachments(
+            message_id=msg.id,
+            kind=kind,
+            mime=mime,
+            size=len(data),
+            duration_ms=max(0, min(int(duration_ms), 3_600_000)) if duration_ms else None,
+            width=width if width and 0 < width < 20000 else None,
+            height=height if height and 0 < height < 20000 else None,
+            has_caption=bool(caption),
+            data=data,
+        )
+    )
+    if reply_ok:
+        db.add(Chat_message_extras(message_id=msg.id, reply_to_id=reply_ok))
+    await db.commit()
+    return ThreadMessage(
+        id=msg.id,
+        user_id=me,
+        sender_name=msg.sender_name,
+        text=caption,
+        created_at=_iso(now),
+        mine=True,
+        attachment=Attachment(kind=kind, mime=mime, size=len(data), duration_ms=duration_ms, width=width, height=height),
+    )
+
+
+@router.get("/attachments/{message_id}")
+async def get_attachment(message_id: int, current_user: UserResponse = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """The photo / voice note of a message, for the people of that conversation only."""
+    me = str(current_user.id)
+    msg = (await db.execute(select(Chat_messages).where(Chat_messages.id == message_id))).scalar_one_or_none()
+    if msg is None or not await _may_see_message(db, me, msg):
+        raise HTTPException(status_code=404, detail="غير موجود")
+    att = (await db.execute(select(Chat_attachments).where(Chat_attachments.message_id == message_id))).scalar_one_or_none()
+    if att is None:
+        raise HTTPException(status_code=404, detail="غير موجود")
+    if not att.data:
+        raise HTTPException(status_code=410, detail="تم حذف هذا الملف")
+    return Response(
+        content=bytes(att.data),
+        media_type=att.mime,
+        headers={"Cache-Control": "private, max-age=604800", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline"},
+    )
 
 
 # ---------- people and groups ----------
