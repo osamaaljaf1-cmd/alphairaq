@@ -15,6 +15,7 @@ from models.chat_messages import Chat_messages
 from models.user_presence import User_presence
 from models.chat_groups import Chat_groups
 from models.chat_group_members import Chat_group_members
+from models.chat_extras import Chat_message_extras
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,8 @@ class SendMessageRequest(BaseModel):
     receiver_id: str
     receiver_name: str
     message_text: str
+    # the message this one answers (WhatsApp-style reply); it must be in the same conversation
+    reply_to_id: Optional[int] = None
 
 
 class MessageResponse(BaseModel):
@@ -119,6 +122,28 @@ async def send_message(
         group_id_str = data.receiver_id[len(GROUP_PREFIX):]
         if not group_id_str.isdigit() or not await _is_group_member(db, int(group_id_str), current_user.id):
             raise HTTPException(status_code=403, detail="لست عضواً في هذه المجموعة")
+    text_value = (data.message_text or "").strip()
+    if not text_value:
+        raise HTTPException(status_code=400, detail="الرسالة فارغة")
+    if len(text_value) > 4000:
+        raise HTTPException(status_code=400, detail="الرسالة طويلة جداً")
+    if data.receiver_id == current_user.id:
+        raise HTTPException(status_code=400, detail="لا يمكن مراسلة نفسك")
+
+    reply_to_id = None
+    if data.reply_to_id:
+        # only a message of this same conversation can be answered
+        me = current_user.id
+        if data.receiver_id == TEAM_CHANNEL_ID or data.receiver_id.startswith(GROUP_PREFIX):
+            same_thread = Chat_messages.receiver_id == data.receiver_id
+        else:
+            same_thread = or_(
+                and_(Chat_messages.user_id == me, Chat_messages.receiver_id == data.receiver_id),
+                and_(Chat_messages.user_id == data.receiver_id, Chat_messages.receiver_id == me),
+            )
+        found = (await db.execute(select(Chat_messages.id).where(Chat_messages.id == data.reply_to_id, same_thread))).first()
+        if found:
+            reply_to_id = data.reply_to_id
 
     try:
         now_dt = datetime.now(timezone.utc)
@@ -127,11 +152,14 @@ async def send_message(
             sender_name=current_user.name or current_user.id[:8],
             receiver_id=data.receiver_id,
             receiver_name=data.receiver_name,
-            message_text=data.message_text,
+            message_text=text_value,
             is_read=False,
             created_at=now_dt,
         )
         db.add(msg)
+        await db.flush()
+        if reply_to_id:
+            db.add(Chat_message_extras(message_id=msg.id, reply_to_id=reply_to_id))
         await db.commit()
         await db.refresh(msg)
 
@@ -175,12 +203,15 @@ async def get_conversation(
         q = (
             select(Chat_messages)
             .where(condition)
-            .order_by(Chat_messages.created_at.asc())
+            # the NEWEST `limit` messages (skip counts back from the newest), shown oldest-first:
+            # ordering oldest-first and cutting at the limit froze a conversation at its first
+            # `limit` messages, so every later message was never shown
+            .order_by(Chat_messages.created_at.desc(), Chat_messages.id.desc())
             .offset(skip)
             .limit(limit)
         )
         result = await db.execute(q)
-        messages = result.scalars().all()
+        messages = list(reversed(result.scalars().all()))
 
         # Mark received messages as read
         mark_read = (
@@ -335,12 +366,15 @@ async def get_group_messages(
         q = (
             select(Chat_messages)
             .where(condition)
-            .order_by(Chat_messages.created_at.asc())
+            # the NEWEST `limit` messages (skip counts back from the newest), shown oldest-first:
+            # ordering oldest-first and cutting at the limit froze a conversation at its first
+            # `limit` messages, so every later message was never shown
+            .order_by(Chat_messages.created_at.desc(), Chat_messages.id.desc())
             .offset(skip)
             .limit(limit)
         )
         result = await db.execute(q)
-        messages = result.scalars().all()
+        messages = list(reversed(result.scalars().all()))
 
         items = [
             MessageResponse(
@@ -451,12 +485,15 @@ async def get_team_messages(
         q = (
             select(Chat_messages)
             .where(condition)
-            .order_by(Chat_messages.created_at.asc())
+            # the NEWEST `limit` messages (skip counts back from the newest), shown oldest-first:
+            # ordering oldest-first and cutting at the limit froze a conversation at its first
+            # `limit` messages, so every later message was never shown
+            .order_by(Chat_messages.created_at.desc(), Chat_messages.id.desc())
             .offset(skip)
             .limit(limit)
         )
         result = await db.execute(q)
-        messages = result.scalars().all()
+        messages = list(reversed(result.scalars().all()))
 
         items = [
             MessageResponse(
