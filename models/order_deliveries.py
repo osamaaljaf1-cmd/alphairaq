@@ -40,3 +40,21 @@ class OrderEvents(Base):
     message = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     read_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DeliveryInvoices(Base):
+    """The Phenix invoice number written on the receipt photo of a delivered order, so a rep finds the
+    photo of an invoice by its number (read from the photo on the phone and confirmed by the delivery
+    person, or added later). Its own table: the existing deliveries table is not migrated."""
+
+    __tablename__ = "delivery_invoices"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    order_id = Column(Integer, nullable=False, unique=True, index=True)
+    pharmacy_id = Column(Integer, nullable=True, index=True)
+    invoice_number = Column(String, nullable=False, index=True)
+    source = Column(String, nullable=True)  # ocr | matched | manual
+    set_by = Column(String, nullable=True)
+    set_by_name = Column(String, nullable=True)
+    set_at = Column(DateTime(timezone=True), server_default=func.now())

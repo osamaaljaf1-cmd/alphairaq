@@ -11,6 +11,7 @@
 Both closing steps need the delivery action permission and an order that is out for delivery.
 """
 import logging
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional
 
@@ -22,7 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from models.app_users import App_users
-from models.order_deliveries import OrderDeliveries, OrderEvents
+from models.debts import Debts
+from models.order_deliveries import DeliveryInvoices, OrderDeliveries, OrderEvents
 from models.orders import Orders
 from models.pharmacies import Pharmacies
 from models.representative_areas import Representative_areas
@@ -30,10 +32,10 @@ from models.representatives import Representatives
 from models.user_assignments import User_assignments
 from schemas.auth import UserResponse
 from services.area_scope import get_customer_scope, get_scoped_pharmacy_names
-from services.customer_names import normalize_name
+from services.customer_names import name_sql, normalize_name
 from services.feature_permissions import require_feature
 from services.access import require_view_any
-from services.permission_check import require_permission
+from services.permission_check import require_permission, resolve_user_role
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,7 @@ async def ensure_tables(db: AsyncSession) -> None:
     conn = await db.connection()
     await conn.run_sync(lambda c: OrderDeliveries.__table__.create(c, checkfirst=True))
     await conn.run_sync(lambda c: OrderEvents.__table__.create(c, checkfirst=True))
+    await conn.run_sync(lambda c: DeliveryInvoices.__table__.create(c, checkfirst=True))
     await db.commit()
     _tables_ready = True
 
@@ -62,6 +65,8 @@ class DeliverBody(BaseModel):
     photo: str  # data URL of the receipt photo
     thumb: Optional[str] = None
     notes: Optional[str] = None
+    invoice_number: Optional[str] = None  # the Phenix invoice number on the photo
+    invoice_source: Optional[str] = None  # ocr | matched | manual
 
 
 class RefuseBody(BaseModel):
@@ -69,6 +74,29 @@ class RefuseBody(BaseModel):
     notes: Optional[str] = None
     photo: Optional[str] = None
     thumb: Optional[str] = None
+    invoice_number: Optional[str] = None
+    invoice_source: Optional[str] = None
+
+
+class InvoiceNumberBody(BaseModel):
+    invoice_number: Optional[str] = None  # empty = remove
+
+
+_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+
+
+def _clean_invoice_number(value: Optional[str]) -> Optional[str]:
+    """Digits only (Arabic-Indic digits turned into 0-9); None when empty."""
+    digits = re.sub(r"\D", "", (value or "").translate(_DIGITS))
+    if not digits:
+        return None
+    if len(digits) > 12:
+        raise HTTPException(status_code=400, detail="رقم القائمة غير صحيح")
+    return digits
+
+
+def _clean_source(value: Optional[str]) -> Optional[str]:
+    return value if value in ("ocr", "matched", "manual") else None
 
 
 def _check_image(value: Optional[str], limit: int, label: str, required: bool) -> Optional[str]:
@@ -165,6 +193,7 @@ async def deliver_order(
     photo = _check_image(data.photo, MAX_PHOTO_CHARS, "صورة الوصل", True)
     thumb = _check_image(data.thumb, MAX_THUMB_CHARS, "الصورة المصغّرة", False)
     notes = _clean_note(data.notes)
+    invoice_number = _clean_invoice_number(data.invoice_number)
     await ensure_tables(db)
 
     order = await _load_order(db, order_id)
@@ -190,6 +219,13 @@ async def deliver_order(
             recorded_by_name=name,
         )
         db.add(record)
+        if invoice_number:
+            db.add(
+                DeliveryInvoices(
+                    order_id=order_id, pharmacy_id=order.pharmacy_id, invoice_number=invoice_number,
+                    source=_clean_source(data.invoice_source), set_by=str(current_user.id), set_by_name=name,
+                )
+            )
         order.status = "delivered"
         order.delivered_at = datetime.now(timezone.utc)
         order.delivered_by = name
@@ -222,6 +258,7 @@ async def refuse_order(
     notes = _clean_note(data.notes)
     photo = _check_image(data.photo, MAX_PHOTO_CHARS, "الصورة", False)
     thumb = _check_image(data.thumb, MAX_THUMB_CHARS, "الصورة المصغّرة", False)
+    invoice_number = _clean_invoice_number(data.invoice_number)
     await ensure_tables(db)
 
     order = await _load_order(db, order_id)
@@ -250,6 +287,13 @@ async def refuse_order(
                 recorded_by_name=name,
             )
         )
+        if invoice_number:
+            db.add(
+                DeliveryInvoices(
+                    order_id=order_id, pharmacy_id=order.pharmacy_id, invoice_number=invoice_number,
+                    source=_clean_source(data.invoice_source), set_by=str(current_user.id), set_by_name=name,
+                )
+            )
         # returned at once: it stops counting as a sale (the sales figures only count the
         # statuses from manager approval up to delivered)
         order.status = "refused"
@@ -286,8 +330,9 @@ async def customer_deliveries(
     await ensure_tables(db)
     rows = (
         await db.execute(
-            select(OrderDeliveries, Orders.total_amount, Orders.created_at)
+            select(OrderDeliveries, Orders.total_amount, Orders.created_at, DeliveryInvoices.invoice_number)
             .join(Orders, Orders.id == OrderDeliveries.order_id)
+            .outerjoin(DeliveryInvoices, DeliveryInvoices.order_id == OrderDeliveries.order_id)
             .where(OrderDeliveries.pharmacy_id == pharmacy_id)
             .order_by(OrderDeliveries.recorded_at.desc(), OrderDeliveries.id.desc())
             .limit(60)
@@ -304,8 +349,9 @@ async def customer_deliveries(
             "amount": total,
             "recorded_by_name": d.recorded_by_name,
             "recorded_at": d.recorded_at.isoformat() if d.recorded_at else None,
+            "invoice_number": inv,
         }
-        for d, total, _ in rows
+        for d, total, _, inv in rows
     ]
 
 
@@ -387,6 +433,131 @@ async def month_records(
     ]
 
 
+@router.get("/order-deliveries/invoice-index")
+async def invoice_index(
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Which Phenix invoice numbers have a receipt photo, and on which order: the debts page puts a
+    photo button next to those invoices. Only the customers the caller may see."""
+    await require_view_any(db, current_user, ["customers", "orders", "debts"])
+    await ensure_tables(db)
+    rows = (
+        await db.execute(
+            select(DeliveryInvoices.invoice_number, DeliveryInvoices.order_id, DeliveryInvoices.pharmacy_id)
+            .join(OrderDeliveries, OrderDeliveries.order_id == DeliveryInvoices.order_id)
+            .where(OrderDeliveries.photo.isnot(None))
+            .order_by(DeliveryInvoices.id.desc())
+        )
+    ).all()
+    if not rows:
+        return []
+    scope = await get_customer_scope(db, current_user)
+    visible = await get_scoped_pharmacy_names(db, scope)
+    names = {}
+    if visible is not None:
+        ids = [r[2] for r in rows if r[2]]
+        if ids:
+            names = {pid: name for pid, name in (await db.execute(select(Pharmacies.id, Pharmacies.name).where(Pharmacies.id.in_(ids)))).all()}
+    return [
+        {"invoice_number": inv, "order_id": oid, "pharmacy_id": pid}
+        for inv, oid, pid in rows
+        if visible is None or (pid in names and normalize_name(names[pid]) in visible)
+    ]
+
+
+async def _may_handle_delivery(db: AsyncSession, current_user: UserResponse, order: Orders) -> None:
+    """The delivery person (delivery action permission), or someone who may see the order."""
+    try:
+        await require_feature(db, current_user, "orders_delivery")
+        return
+    except HTTPException:
+        pass
+    await require_permission(db, current_user, "orders", "view")
+    if not await _order_visible(db, current_user, order):
+        raise HTTPException(status_code=403, detail="هذا الطلب خارج نطاق صلاحياتك")
+
+
+@router.get("/order-deliveries/{order_id}/invoice-candidates")
+async def invoice_candidates(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """The Phenix invoices of this order's customer (from the synced debts), newest first, to check a
+    number read from the photo against real invoices (and their amounts against the order's)."""
+    await ensure_tables(db)
+    order = await _load_order(db, order_id)
+    await _may_handle_delivery(db, current_user, order)
+    pharmacy = (await db.execute(select(Pharmacies).where(Pharmacies.id == order.pharmacy_id))).scalar_one_or_none()
+    if pharmacy is None:
+        return {"order_amount": order.total_amount, "invoices": []}
+    rows = (
+        await db.execute(
+            select(Debts.invoice_number, Debts.amount, Debts.remaining_amount, Debts.invoice_date)
+            .where(name_sql(Debts.customer_name) == normalize_name(pharmacy.name))
+            .order_by(Debts.id.desc())
+            .limit(80)
+        )
+    ).all()
+    numbers = [r[0] for r in rows if r[0]]
+    linked = {}
+    if numbers:
+        linked = dict(
+            (await db.execute(select(DeliveryInvoices.invoice_number, DeliveryInvoices.order_id).where(DeliveryInvoices.invoice_number.in_(numbers)))).all()
+        )
+    return {
+        "order_amount": order.total_amount,
+        "invoices": [
+            {
+                "invoice_number": num,
+                "amount": amount,
+                "remaining": remaining,
+                "invoice_date": inv_date,
+                "linked_order_id": linked.get(num) if linked.get(num) != order_id else None,
+            }
+            for num, amount, remaining, inv_date in rows
+            if num
+        ],
+    }
+
+
+@router.put("/order-deliveries/{order_id}/invoice-number")
+async def set_invoice_number(
+    order_id: int,
+    data: InvoiceNumberBody,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Add, correct or remove the invoice number of a delivered order's photo: the delivery person who
+    took it, the delivery accounts, the admin, accounting and managers."""
+    await ensure_tables(db)
+    order = await _load_order(db, order_id)
+    record = (await db.execute(select(OrderDeliveries).where(OrderDeliveries.order_id == order_id))).scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="لا يوجد سجل توصيل لهذا الطلب")
+    role = await resolve_user_role(db, current_user)
+    if record.recorded_by != str(current_user.id) and role not in ("admin", "accounting", "manager"):
+        await require_feature(db, current_user, "orders_delivery")
+    if not await _order_visible(db, current_user, order):
+        raise HTTPException(status_code=403, detail="هذا الطلب خارج نطاق صلاحياتك")
+    number = _clean_invoice_number(data.invoice_number)
+    row = (await db.execute(select(DeliveryInvoices).where(DeliveryInvoices.order_id == order_id))).scalar_one_or_none()
+    name = await _account_name(db, current_user)
+    if number is None:
+        if row is not None:
+            await db.delete(row)
+    elif row is None:
+        db.add(DeliveryInvoices(order_id=order_id, pharmacy_id=order.pharmacy_id, invoice_number=number, source="manual", set_by=str(current_user.id), set_by_name=name))
+    else:
+        row.invoice_number = number
+        row.source = "manual"
+        row.set_by = str(current_user.id)
+        row.set_by_name = name
+    await db.commit()
+    return {"order_id": order_id, "invoice_number": number}
+
+
 async def _visible_record(db: AsyncSession, current_user: UserResponse, order_id: int) -> OrderDeliveries:
     await require_permission(db, current_user, "orders", "view")
     await ensure_tables(db)
@@ -406,8 +577,10 @@ async def get_delivery(
     current_user: UserResponse = Depends(get_current_user),
 ):
     d = await _visible_record(db, current_user, order_id)
+    inv = (await db.execute(select(DeliveryInvoices.invoice_number).where(DeliveryInvoices.order_id == order_id))).scalar_one_or_none()
     return {
         "order_id": d.order_id,
+        "invoice_number": inv,
         "outcome": d.outcome,
         "reason": d.reason,
         "notes": d.notes,
