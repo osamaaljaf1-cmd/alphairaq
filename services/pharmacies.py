@@ -61,10 +61,7 @@ class PharmaciesService:
                         count_query = count_query.where(getattr(Pharmacies, field) == value)
 
             if scope is not None and not scope.unrestricted:
-                visibility = or_(
-                    Pharmacies.area_id.in_(scope.area_ids) if scope.area_ids else false(),
-                    Pharmacies.representative_id.in_(scope.rep_ids) if scope.rep_ids else false(),
-                )
+                visibility = scope.customer_filter(Pharmacies)
                 query = query.where(visibility)
                 count_query = count_query.where(visibility)
 

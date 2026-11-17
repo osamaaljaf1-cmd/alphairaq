@@ -26,6 +26,8 @@ from models.order_submissions import Order_submissions
 from models.orders import Orders
 from schemas.auth import UserResponse
 from services.permission_check import require_permission
+from services.company_scope import allowed_product_ids
+from models.products import Products
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,14 @@ async def submit_order(
 ):
     await require_permission(db, current_user, "orders", "add")
     me = str(current_user.id)
+
+    # a person linked to companies orders only those companies' items
+    allowed = await allowed_product_ids(db, me)
+    if allowed is not None:
+        outside = sorted({int(i.product_id) for i in data.items} - allowed)
+        if outside:
+            names = (await db.execute(select(Products.name).where(Products.id.in_(outside)))).scalars().all()
+            raise HTTPException(status_code=400, detail="أصناف ليست من شركتك: " + "، ".join(names or [str(x) for x in outside]))
     key = data.client_request_id.strip()
 
     # 1. the same key again (a double tap, a retry): the order that was already made

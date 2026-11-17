@@ -2,12 +2,13 @@ import logging
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import or_, false, select
+from sqlalchemy import and_, or_, false, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.representatives import Representatives
 from models.representative_areas import Representative_areas
 from models.user_assignments import User_assignments
+from models.staff_areas import Staff_areas
 from models.areas import Areas
 from models.pharmacies import Pharmacies
 from schemas.auth import UserResponse
@@ -65,10 +66,61 @@ class CustomerScope:
     for them yet.
     """
 
-    def __init__(self, unrestricted: bool, area_ids: Optional[set[int]] = None, rep_ids: Optional[list[int]] = None):
+    def __init__(self, unrestricted: bool, area_ids: Optional[set[int]] = None, rep_ids: Optional[list[int]] = None, by_branch: bool = False):
         self.unrestricted = unrestricted
         self.area_ids = area_ids or set()
         self.rep_ids = rep_ids or []
+        # True when the scope comes from the staff member's own branch / areas (staff_areas):
+        # their orders and returns then also include any order of a customer in those areas,
+        # whoever entered it.
+        self.by_branch = by_branch
+
+    def covers(self, area_id, representative_id) -> bool:
+        """Whether a customer with this area / rep is visible (in Python; ``customer_filter`` is the
+        same rule in SQL). For a branch scope the rep only counts for a customer with no area: a
+        customer whose area is in another branch stays there whoever their rep is."""
+        if self.unrestricted:
+            return True
+        if area_id is not None and area_id in self.area_ids:
+            return True
+        if representative_id is None or representative_id not in self.rep_ids:
+            return False
+        return area_id is None or not self.by_branch
+
+    def customer_filter(self, model):
+        """SQL filter for a customer table (pharmacies, doctors) with area_id and representative_id."""
+        by_area = model.area_id.in_(self.area_ids) if self.area_ids else false()
+        if not self.rep_ids:
+            return by_area
+        by_rep = model.representative_id.in_(self.rep_ids)
+        if self.by_branch:
+            by_rep = and_(model.area_id.is_(None), by_rep)
+        return or_(by_area, by_rep)
+
+
+async def reps_in_areas(db: AsyncSession, area_ids: set[int]) -> list[int]:
+    """Reps who work only inside these areas (every area they are assigned is one of them). A rep
+    who also covers areas elsewhere is left out: their customers there must not show up through
+    the rep, and their customers here show anyway by area."""
+    if not area_ids:
+        return []
+    rows = await db.execute(select(Representative_areas.representative_id, Representative_areas.area_id))
+    per_rep: dict[int, set[int]] = {}
+    for rep_id, area_id in rows.all():
+        if rep_id is not None:
+            per_rep.setdefault(rep_id, set()).add(area_id)
+    return sorted(rep_id for rep_id, areas in per_rep.items() if areas and areas <= area_ids)
+
+
+async def get_staff_scope(db: AsyncSession, user_id: str) -> Optional[CustomerScope]:
+    """The scope of a staff member linked to a branch / governorate / areas (staff_areas), or None
+    when they have no link (then the role's usual rule applies)."""
+    rows = await db.execute(select(Staff_areas.area_id).where(Staff_areas.user_id == str(user_id)))
+    direct = {row[0] for row in rows.all()}
+    if not direct:
+        return None
+    area_ids = await expand_area_ids(db, direct)
+    return CustomerScope(unrestricted=False, area_ids=area_ids, rep_ids=await reps_in_areas(db, area_ids), by_branch=True)
 
 
 async def get_customer_scope(db: AsyncSession, current_user: UserResponse) -> CustomerScope:
@@ -90,6 +142,16 @@ async def get_customer_scope(db: AsyncSession, current_user: UserResponse) -> Cu
         select(Representatives).where(Representatives.user_id == current_user.id)
     )
     rep = rep_result.scalar_one_or_none()
+
+    # A staff member linked to a branch / areas (anyone but a rep, whose areas are in
+    # representative_areas) sees that part of the tree only. The admin always sees everything.
+    if not rep or rep.role != "rep":
+        staff = await get_staff_scope(db, current_user.id)
+        if staff is not None:
+            from services.permission_check import resolve_user_role
+
+            if await resolve_user_role(db, current_user) != "admin":
+                return staff
 
     if not rep or rep.role not in ("rep", "manager"):
         return CustomerScope(unrestricted=True)
@@ -164,12 +226,7 @@ async def get_scoped_pharmacy_list(db: AsyncSession, scope: "CustomerScope") -> 
     if not scope.unrestricted:
         if not scope.area_ids and not scope.rep_ids:
             return []
-        query = query.where(
-            or_(
-                Pharmacies.area_id.in_(scope.area_ids) if scope.area_ids else false(),
-                Pharmacies.representative_id.in_(scope.rep_ids) if scope.rep_ids else false(),
-            )
-        )
+        query = query.where(scope.customer_filter(Pharmacies))
     seen: dict[str, str] = {}
     for (name,) in (await db.execute(query)).all():
         cleaned = clean_name(name)
@@ -191,11 +248,6 @@ async def get_scoped_pharmacy_names(db: AsyncSession, scope: "CustomerScope") ->
         return set()
 
     result = await db.execute(
-        select(Pharmacies.name).where(
-            or_(
-                Pharmacies.area_id.in_(scope.area_ids) if scope.area_ids else false(),
-                Pharmacies.representative_id.in_(scope.rep_ids) if scope.rep_ids else false(),
-            )
-        )
+        select(Pharmacies.name).where(scope.customer_filter(Pharmacies))
     )
     return {normalize_name(row[0]) for row in result.all() if row[0]}

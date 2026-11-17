@@ -13,7 +13,8 @@ from core.database import get_db
 from services.orders import OrdersService
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
-from services.access import require_view_any, visible_user_ids
+from models.orders import Orders
+from services.access import require_view_any, visible_records, visible_user_ids
 from models.representatives import Representatives
 from services.feature_permissions import require_feature
 from services.permission_check import require_permission
@@ -235,7 +236,7 @@ async def query_orderss_all(
     current_user: UserResponse = Depends(get_current_user),
 ):
     await require_view_any(db, current_user, ("orders", "dashboard", "target", "returns", "pharmacy_visits", "doctor_visits", "rep_operations"))
-    user_ids = await visible_user_ids(db, current_user)
+    user_ids, where = await visible_records(db, current_user, Orders)
     # Query orderss with filtering, sorting, and pagination without user limitation
     logger.debug(f"Querying orderss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
 
@@ -251,6 +252,7 @@ async def query_orderss_all(
 
         result = await service.get_list(
             user_ids=user_ids,
+            where=where,
             skip=skip,
             limit=limit,
             query_dict=query_dict,

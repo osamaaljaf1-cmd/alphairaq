@@ -61,10 +61,7 @@ class DoctorsService:
                         count_query = count_query.where(getattr(Doctors, field) == value)
 
             if scope is not None and not scope.unrestricted:
-                visibility = or_(
-                    Doctors.area_id.in_(scope.area_ids) if scope.area_ids else false(),
-                    Doctors.representative_id.in_(scope.rep_ids) if scope.rep_ids else false(),
-                )
+                visibility = scope.customer_filter(Doctors)
                 query = query.where(visibility)
                 count_query = count_query.where(visibility)
 

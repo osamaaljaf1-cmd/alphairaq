@@ -67,11 +67,7 @@ async def _ensure_in_scope(db: AsyncSession, current_user: UserResponse, area_id
     """A rep/manager may only open the activity log of a customer in their own
     scope (assigned areas or reps) — the same rule the customer lists use."""
     scope = await get_customer_scope(db, current_user)
-    if scope.unrestricted:
-        return
-    if (area_id is not None and area_id in scope.area_ids) or (
-        representative_id is not None and representative_id in scope.rep_ids
-    ):
+    if scope.covers(area_id, representative_id):
         return
     raise HTTPException(status_code=403, detail="هذا الزبون خارج نطاق صلاحياتك")
 

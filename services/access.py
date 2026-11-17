@@ -63,3 +63,33 @@ async def visible_user_ids(db: AsyncSession, current_user: UserResponse) -> Opti
         select(Representatives.user_id).where(Representatives.id.in_(scope.rep_ids))
     )
     return {row[0] for row in rows.all() if row[0]} | {str(current_user.id)}
+
+
+async def visible_records(db: AsyncSession, current_user: UserResponse, model) -> tuple[Optional[set[str]], Optional[object]]:
+    """What a list of orders / returns (or their items) is restricted to: ``(user_ids, where)``.
+
+    Usually ``where`` is None and ``user_ids`` is the same as ``visible_user_ids``. For a staff
+    member linked to a branch / areas, ``where`` is a filter that also keeps any record of a
+    customer in those areas, whoever entered it (an order the admin typed for an Erbil pharmacy
+    shows to the Erbil accountant); ``user_ids`` is then None because ``where`` replaces it."""
+    from sqlalchemy import or_
+    from models.orders import Orders
+    from models.returns import Returns
+    from models.order_items import Order_items
+    from models.return_items import Return_items
+    from models.pharmacies import Pharmacies
+
+    scope = await get_customer_scope(db, current_user)
+    user_ids = await visible_user_ids(db, current_user)
+    if scope.unrestricted or not scope.by_branch:
+        return user_ids, None
+    pharmacies = select(Pharmacies.id).where(Pharmacies.area_id.in_(scope.area_ids or {-1}))
+    if model is Orders or model is Returns:
+        in_branch = model.pharmacy_id.in_(pharmacies)
+    elif model is Order_items:
+        in_branch = Order_items.order_id.in_(select(Orders.id).where(Orders.pharmacy_id.in_(pharmacies)))
+    elif model is Return_items:
+        in_branch = Return_items.return_id.in_(select(Returns.id).where(Returns.pharmacy_id.in_(pharmacies)))
+    else:
+        return user_ids, None
+    return None, or_(model.user_id.in_(user_ids or {""}), in_branch)

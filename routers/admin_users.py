@@ -47,6 +47,11 @@ class LocalCreateUserRequest(BaseModel):
     email: str
     password: str
     role: str = "rep"
+    # optional: the branch the person works in and the companies they work for (set right away)
+    branch_id: Optional[int] = None
+    company_ids: List[int] = []
+    # a rep only: their manager (a representatives row with role manager)
+    manager_rep_id: Optional[int] = None
 
 
 class CreateUserResponse(BaseModel):
@@ -123,6 +128,44 @@ async def local_list_users(
         raise HTTPException(status_code=500, detail="خطأ في النظام")
 
 
+async def _link_new_user(
+    db: AsyncSession,
+    user_id: str,
+    role: str,
+    branch_id: Optional[int],
+    company_ids: List[int],
+    manager_rep_id: Optional[int] = None,
+    by_user_id: str = "",
+) -> None:
+    """Put a new account in its branch, its companies and (a rep) under its manager. The branch is the person's staff_areas row:
+    for anyone but a rep it is what they see; for a rep it is their branch (their areas, linked next,
+    decide what they see). Bad ids are skipped: the account itself is already made."""
+    from sqlalchemy import select
+    from models.areas import Areas
+    from models.companies import Companies, Company_staff
+    from models.staff_areas import Staff_areas
+    from models.representatives import Representatives
+    from models.user_assignments import User_assignments
+
+    try:
+        if branch_id is not None and role != "admin" and await db.get(Areas, branch_id):
+            db.add(Staff_areas(user_id=user_id, area_id=branch_id))
+        wanted = sorted(set(company_ids or []))
+        if wanted:
+            found = (await db.execute(select(Companies.id).where(Companies.id.in_(wanted)))).scalars().all()
+            for cid in found:
+                db.add(Company_staff(company_id=cid, user_id=user_id))
+        if manager_rep_id is not None and role == "rep":
+            manager = await db.get(Representatives, manager_rep_id)
+            me = (await db.execute(select(Representatives).where(Representatives.user_id == user_id))).scalars().first()
+            if manager is not None and manager.role == "manager" and me is not None:
+                db.add(User_assignments(user_id=by_user_id or user_id, manager_rep_id=manager.id, assigned_rep_id=me.id, assignment_type="manager"))
+        await db.commit()
+    except Exception as e:  # never fail the account for this
+        await db.rollback()
+        logger.warning("Could not link new user %s to branch/companies: %s", user_id, e)
+
+
 @router.post("/local-create-user", response_model=CreateUserResponse)
 async def local_create_user(
     data: LocalCreateUserRequest,
@@ -169,6 +212,8 @@ async def local_create_user(
             })
         except Exception as rep_err:
             logger.warning(f"Failed to create representative record: {rep_err}")
+
+        await _link_new_user(db, new_user_id, data.role, data.branch_id, data.company_ids, data.manager_rep_id, str(current_user.id))
 
         logger.info(f"User created via local auth: id={result.id}, email={data.email}, role={data.role}")
         return CreateUserResponse(success=True, id=result.id, message="تم إنشاء المستخدم بنجاح")
