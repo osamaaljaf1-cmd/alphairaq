@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from core.password import hash_password
+from services.login_security import end_all_sessions, password_problem
 from services.app_users import App_usersService
 from services.representatives import RepresentativesService
 from dependencies.auth import forget_account_status, get_current_user
@@ -183,6 +184,10 @@ async def local_create_user(
         if existing:
             raise HTTPException(status_code=400, detail="اسم المستخدم موجود بالفعل")
 
+        problem = password_problem(data.password, data.email)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+
         # Hash the password
         password_hash = hash_password(data.password)
 
@@ -302,19 +307,22 @@ async def local_change_password(
     if not await verify_local_admin(db, current_user.id):
         raise HTTPException(status_code=403, detail="صلاحيات المسؤول مطلوبة")
 
-    if not data.new_password or len(data.new_password) < 4:
-        raise HTTPException(status_code=400, detail="كلمة المرور يجب أن تكون 4 أحرف على الأقل")
-
     service = App_usersService(db)
     try:
         user_record = await service.get_by_id(user_id)
         if not user_record:
             raise HTTPException(status_code=404, detail="المستخدم غير موجود")
 
+        problem = password_problem(data.new_password, user_record.email)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
+
         password_hash = hash_password(data.new_password)
         result = await service.update(user_id, {"password_hash": password_hash})
         if not result:
             raise HTTPException(status_code=500, detail="فشل في تغيير كلمة المرور")
+        # whoever still had the old password is logged out on every device
+        await end_all_sessions(db, user_record.user_id)
 
         logger.info(f"Password changed for user {user_id} by admin {data.admin_user_id}")
         return {"success": True, "message": "تم تغيير كلمة المرور بنجاح"}
@@ -393,6 +401,9 @@ async def create_user(
 
         # Check if email already exists
         existing = await service.get_by_field("email", data.email)
+        problem = password_problem(data.password, data.email)
+        if problem:
+            raise HTTPException(status_code=400, detail=problem)
         if existing:
             raise HTTPException(status_code=400, detail="اسم المستخدم موجود بالفعل")
 

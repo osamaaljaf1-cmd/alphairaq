@@ -1,7 +1,7 @@
 import hashlib
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 from core.auth import AccessTokenError, decode_access_token
@@ -29,29 +29,39 @@ async def get_bearer_token(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication credentials were not provided")
 
 
-# A token lives 7 days, so a blocked / deactivated account kept working until it ran out.
-# The account's status is looked up (cached for a minute: one query per user per minute at most).
+# A token lives 7 days, so a blocked / deactivated account kept working until it ran out, and so did a
+# session opened with a password that has since been changed. The account's status and the moment its
+# sessions were last ended are looked up (cached for a minute: one query per user per minute at most).
 _BLOCKED_STATUSES = {"blocked", "inactive"}
 _STATUS_TTL_SECONDS = 60.0
-_status_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+_status_cache: Dict[str, Tuple[float, Optional[str], Optional[float]]] = {}
 
 
-async def _account_status(db: AsyncSession, user_id: str) -> Optional[str]:
-    """The app account's status, or None when there is no such row (service / bootstrap accounts)."""
+async def _account_state(db: AsyncSession, user_id: str) -> Tuple[Optional[str], Optional[float]]:
+    """The app account's status (None when there is no such row: service / bootstrap accounts) and the
+    time (epoch seconds) before which its sessions no longer count, if it was ever set."""
     now = time.monotonic()
     hit = _status_cache.get(user_id)
     if hit and now - hit[0] < _STATUS_TTL_SECONDS:
-        return hit[1]
+        return hit[1], hit[2]
+    status_value: Optional[str] = None
+    reset_after: Optional[float] = None
     try:
         row = (await db.execute(select(App_users.status).where(App_users.user_id == user_id).limit(1))).first()
+        status_value = row[0] if row else None
+        from models.auth_security import Session_resets
+
+        reset = (await db.execute(select(Session_resets.after).where(Session_resets.user_id == user_id).limit(1))).first()
+        if reset and reset[0] is not None:
+            after = reset[0] if reset[0].tzinfo else reset[0].replace(tzinfo=timezone.utc)
+            reset_after = after.timestamp()
     except Exception:  # never lock everybody out because the lookup failed
         logger.warning("Account status lookup failed", exc_info=True)
-        return None
-    status_value = row[0] if row else None
+        return status_value, reset_after
     if len(_status_cache) > 5000:
         _status_cache.clear()
-    _status_cache[user_id] = (now, status_value)
-    return status_value
+    _status_cache[user_id] = (now, status_value, reset_after)
+    return status_value, reset_after
 
 
 def forget_account_status(user_id: Optional[str] = None) -> None:
@@ -75,8 +85,13 @@ async def get_current_user(token: str = Depends(get_bearer_token), db: AsyncSess
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token")
 
-    if (await _account_status(db, str(user_id))) in _BLOCKED_STATUSES:
+    account_status, reset_after = await _account_state(db, str(user_id))
+    if account_status in _BLOCKED_STATUSES:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="هذا الحساب موقوف. تواصل مع المسؤول")
+    if reset_after is not None:
+        issued = payload.get("iat")
+        if not isinstance(issued, (int, float)) or issued < reset_after:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="انتهت الجلسة. سجّل الدخول مرة أخرى")
 
     last_login_raw = payload.get("last_login")
     last_login = None
