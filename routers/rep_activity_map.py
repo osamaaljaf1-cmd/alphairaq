@@ -174,6 +174,8 @@ class VisitCountBucket(BaseModel):
     pharmacy: int = 0
     doctor: int = 0
     total: int = 0
+    # visits known only from an order or a collection (no visit was logged at that customer that day)
+    from_sales: int = 0
 
 
 class VisitRepRow(BaseModel):
@@ -212,52 +214,115 @@ async def get_visit_counts(
     month_start = today_start.replace(day=1)
     earliest = min(month_start, yesterday_start)
 
-    query = select(Activity_logs.type, Activity_logs.timestamp, Activity_logs.user_id).where(
-        Activity_logs.type.in_(["pharmacy_visit", "doctor_visit"]),
-        Activity_logs.timestamp >= earliest,
-    )
+    # One visit = one representative at one customer on one (Baghdad) day, whatever happened there:
+    # a logged visit, an order, a collection, or all of them together. An order or a collection by a
+    # representative is a visit even when the visit itself was not logged.
+    from models.orders import Orders
+    from models.payments import Payments
+    from models.pharmacies import Pharmacies
+    from services.customer_names import normalize_name
 
     scope = await get_customer_scope(db, current_user)
+    user_filter = None
     if not scope.unrestricted:
         reps_result = await db.execute(
             select(Representatives.user_id).where(Representatives.id.in_(scope.rep_ids))
         )
-        user_ids = {row[0] for row in reps_result.all()} | {str(current_user.id)}
-        query = query.where(Activity_logs.user_id.in_(user_ids))
+        user_filter = {row[0] for row in reps_result.all()} | {str(current_user.id)}
 
-    result = await db.execute(query)
+    rep_users = {
+        uid for (uid,) in (await db.execute(select(Representatives.user_id).where(Representatives.role == "rep"))).all() if uid
+    }
+
+    # (user, kind, customer key, time, from_sales)
+    events: list[tuple[str, str, str, datetime, bool]] = []
+
+    logs_q = select(
+        Activity_logs.type, Activity_logs.timestamp, Activity_logs.user_id,
+        Activity_logs.pharmacy_id, Activity_logs.pharmacy_name, Activity_logs.doctor_id, Activity_logs.doctor_name, Activity_logs.id,
+    ).where(Activity_logs.type.in_(["pharmacy_visit", "doctor_visit"]), Activity_logs.timestamp >= earliest)
+    if user_filter is not None:
+        logs_q = logs_q.where(Activity_logs.user_id.in_(user_filter))
+    for vtype, ts, uid, ph_id, ph_name, doc_id, doc_name, log_id in (await db.execute(logs_q)).all():
+        if vtype == "pharmacy_visit":
+            key = f"p:{ph_id}" if ph_id else (f"pn:{normalize_name(ph_name)}" if ph_name else f"log:{log_id}")
+            events.append((uid, "pharmacy", key, ts, False))
+        else:
+            key = f"d:{doc_id}" if doc_id else (f"dn:{normalize_name(doc_name)}" if doc_name else f"log:{log_id}")
+            events.append((uid, "doctor", key, ts, False))
+
+    if rep_users:
+        orders_q = select(Orders.user_id, Orders.pharmacy_id, Orders.created_at).where(
+            Orders.created_at >= earliest, Orders.user_id.in_(rep_users)
+        )
+        if user_filter is not None:
+            orders_q = orders_q.where(Orders.user_id.in_(user_filter))
+        for uid, ph_id, ts in (await db.execute(orders_q)).all():
+            if ph_id:
+                events.append((uid, "pharmacy", f"p:{ph_id}", ts, True))
+
+        pay_q = select(Payments.user_id, Payments.customer_name, Payments.created_at).where(
+            Payments.created_at >= earliest,
+            Payments.user_id.in_(rep_users),
+            (Payments.status.is_(None)) | (Payments.status != "canceled"),
+        )
+        if user_filter is not None:
+            pay_q = pay_q.where(Payments.user_id.in_(user_filter))
+        pays = (await db.execute(pay_q)).all()
+        if pays:
+            # a collection names its customer: the same name (spacing / case ignored) is the same pharmacy
+            by_name: dict[str, int] = {}
+            for pid, pname in (await db.execute(select(Pharmacies.id, Pharmacies.name))).all():
+                by_name.setdefault(normalize_name(pname), pid)
+            for uid, cname, ts in pays:
+                n = normalize_name(cname)
+                if not n:
+                    continue
+                pid = by_name.get(n)
+                events.append((uid, "pharmacy", f"p:{pid}" if pid else f"pn:{n}", ts, True))
 
     counts = {k: VisitCountBucket() for k in ("today", "yesterday", "month")}
-
-    def add(bucket: VisitCountBucket, visit_type: str):
-        if visit_type == "pharmacy_visit":
-            bucket.pharmacy += 1
-        else:
-            bucket.doctor += 1
-        bucket.total += 1
-
     per_user: dict[str, dict[str, VisitCountBucket]] = {}
 
     def user_buckets(uid: str) -> dict[str, VisitCountBucket]:
         return per_user.setdefault(uid, {k: VisitCountBucket() for k in ("today", "yesterday", "month")})
 
-    for visit_type, ts, uid in result.all():
-        if ts is None:
+    # the visits of the period, one per (user, customer, day); a logged visit wins over an order /
+    # collection for the "from_sales" mark
+    visits: dict[tuple[str, str, date], tuple[str, datetime, bool]] = {}
+    for uid, kind, key, ts, from_sales in events:
+        if ts is None or not uid:
             continue
+        if ts.tzinfo is None:  # stored without a zone: the database keeps UTC
+            ts = ts.replace(tzinfo=timezone.utc)
         local = ts.astimezone(_IRAQ_TZ)
-        mine = user_buckets(uid) if uid else None
+        k = (uid, key, local.date())
+        seen = visits.get(k)
+        if seen is None:
+            visits[k] = (kind, local, from_sales)
+        elif seen[2] and not from_sales:
+            visits[k] = (seen[0], seen[1], False)
+
+    def add(bucket: VisitCountBucket, kind: str, from_sales: bool):
+        if kind == "pharmacy":
+            bucket.pharmacy += 1
+        else:
+            bucket.doctor += 1
+        bucket.total += 1
+        if from_sales:
+            bucket.from_sales += 1
+
+    for (uid, _key, _day), (kind, local, from_sales) in visits.items():
+        mine = user_buckets(uid)
         if local >= today_start:
-            add(counts["today"], visit_type)
-            if mine:
-                add(mine["today"], visit_type)
+            add(counts["today"], kind, from_sales)
+            add(mine["today"], kind, from_sales)
         elif local >= yesterday_start:
-            add(counts["yesterday"], visit_type)
-            if mine:
-                add(mine["yesterday"], visit_type)
+            add(counts["yesterday"], kind, from_sales)
+            add(mine["yesterday"], kind, from_sales)
         if local >= month_start:
-            add(counts["month"], visit_type)
-            if mine:
-                add(mine["month"], visit_type)
+            add(counts["month"], kind, from_sales)
+            add(mine["month"], kind, from_sales)
 
     # Every representative in scope is listed (also those with no visits yet), the rest by visit.
     from models.app_users import App_users
