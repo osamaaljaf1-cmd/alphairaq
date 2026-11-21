@@ -1,5 +1,5 @@
 import logging
-from datetime import date as date_type, datetime
+from datetime import date as date_type, datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -40,6 +40,7 @@ class ActivityEvent(BaseModel):
     reason: Optional[str] = None
     notes: Optional[str] = None
     reference: Optional[str] = None  # invoice number for debts
+    invoice_date: Optional[str] = None  # a debt: the invoice's own date (the event's date = when it was uploaded)
     remaining_amount: Optional[float] = None
     visit_type: Optional[str] = None
     collection_date: Optional[date_type] = None
@@ -176,15 +177,24 @@ async def _build_timeline(
             rep_name=p.rep_name,
             notes=p.notes,
         ))
+    def _invoice_day(d) -> Optional[datetime]:
+        """An invoice sits in the log on its own date (midday Baghdad), not when it was uploaded."""
+        try:
+            day = date_type.fromisoformat((d.invoice_date or "")[:10])
+        except ValueError:
+            return d.created_at
+        return datetime(day.year, day.month, day.day, 12, 0, tzinfo=timezone(timedelta(hours=3)))
+
     for d in debts:
         events.append(ActivityEvent(
             type="debt",
             id=d.id,
-            date=d.created_at,
+            date=_invoice_day(d),
             status=d.status,
             amount=d.amount,
             remaining_amount=d.remaining_amount,
             reference=d.invoice_number,
+            invoice_date=d.invoice_date,
             notes=d.notes,
         ))
     for l in logs:

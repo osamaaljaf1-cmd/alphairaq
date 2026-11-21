@@ -40,6 +40,13 @@ router = APIRouter(prefix="/api/v1/collections", tags=["collections"])
 _LOCAL_TZ = timezone(timedelta(hours=3))
 
 
+class AppointmentStep(BaseModel):
+    """One appointment of the chain (from the first one after the last payment to the current one)."""
+    taken_at: Optional[str] = None  # when the rep took it
+    date: Optional[str] = None  # the collection date it set
+    rep_name: Optional[str] = None
+
+
 class CollectionItem(BaseModel):
     id: int
     user_id: str
@@ -59,6 +66,8 @@ class CollectionItem(BaseModel):
     visited_on_due_date: Optional[bool] = None  # None until the day has come
     visit_at: Optional[str] = None  # when the rep visited the customer on that day
     missed_visit: bool = False  # the day has passed and the rep did not go to the customer
+    history: List[AppointmentStep] = []  # every appointment of the chain, the current one last
+    first_taken_at: Optional[str] = None  # when the first appointment of the chain was taken
 
     class Config:
         from_attributes = True
@@ -163,6 +172,7 @@ async def _resolve_appointments(db: AsyncSession, logs: List[Activity_logs]) -> 
                 "gap": gap,
                 "number": len(chain),
                 "previous_dates": [l.collection_date.isoformat() for l in chain[:-1] if l.collection_date],
+                "chain": chain,
             }
         )
     return resolved
@@ -265,7 +275,7 @@ async def _open_appointments(db: AsyncSession, current_user: UserResponse, last_
     resolved.sort(key=lambda r: (r["log"].collection_date, r["log"].id))
     today = date.today()
     visited_at = await _visits_on_due_dates(db, resolved, today)
-    reps = await _rep_names(db, {r["log"].user_id for r in resolved})
+    reps = await _rep_names(db, {l.user_id for r in resolved for l in r.get("chain", [r["log"]])})
     for r in resolved:
         log = r["log"]
         due_has_come = log.collection_date <= today
@@ -273,6 +283,16 @@ async def _open_appointments(db: AsyncSession, current_user: UserResponse, last_
         r["visited"] = (r["visit_at"] is not None) if due_has_come else None
         r["missed"] = bool(log.collection_date < today and r["visit_at"] is None)
         r["rep_name"] = reps.get(log.user_id)
+        chain = r.get("chain") or [log]
+        r["history"] = [
+            AppointmentStep(
+                taken_at=_as_utc(l.timestamp).isoformat() if l.timestamp else None,
+                date=l.collection_date.isoformat() if l.collection_date else None,
+                rep_name=reps.get(l.user_id),
+            )
+            for l in chain
+        ]
+        r["first_taken_at"] = r["history"][0].taken_at if r["history"] else None
     return resolved
 
 
@@ -321,6 +341,8 @@ async def get_upcoming_collections(
                 visited_on_due_date=r["visited"],
                 visit_at=r["visit_at"].isoformat() if r["visit_at"] else None,
                 missed_visit=r["missed"],
+                history=r["history"],
+                first_taken_at=r["first_taken_at"],
             )
         )
 
@@ -382,3 +404,157 @@ async def get_collection_notifications(
         "tomorrow_count": sum(1 for n in notifications if n["type"] == "tomorrow"),
         "total": len(notifications),
     }
+
+
+
+class UnvisitedDebt(BaseModel):
+    customer_name: str
+    pharmacy_id: Optional[int] = None
+    area: Optional[str] = None
+    rep_name: Optional[str] = None  # the customer's own rep
+    remaining: float
+    invoices: int
+    oldest_invoice_date: Optional[str] = None
+    days_open: Optional[int] = None  # days since the oldest unpaid invoice
+    last_visit_at: Optional[str] = None  # the last visit / order / collection ever (before the debt)
+
+
+class UnvisitedDebtsResponse(BaseModel):
+    items: List[UnvisitedDebt]
+    total: int
+    total_remaining: float
+
+
+@router.get("/unvisited-debts", response_model=UnvisitedDebtsResponse)
+async def get_unvisited_debts(
+    limit: int = Query(200, ge=1, le=2000),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """ديون لم تُزر: the customers (in the caller's scope) who owe money, have no open collection
+    appointment, and were not visited since their oldest unpaid invoice: no visit logged, no order
+    and no collection at them from that day on, by anyone. The oldest debts first."""
+    from models.orders import Orders
+
+    scope = await get_customer_scope(db, current_user)
+    scoped = await get_scoped_pharmacy_names(db, scope)
+    if scoped is not None and not scoped:
+        return UnvisitedDebtsResponse(items=[], total=0, total_remaining=0)
+
+    # who owes, how much, since when
+    owing: Dict[str, dict] = {}
+    for name, remaining, inv_date, created in (
+        await db.execute(
+            select(Debts.customer_name, Debts.remaining_amount, Debts.invoice_date, Debts.created_at).where(Debts.remaining_amount > 0.005)
+        )
+    ).all():
+        key = normalize_name(name)
+        if not key or (scoped is not None and key not in scoped):
+            continue
+        day: Optional[date] = None
+        try:
+            day = date.fromisoformat((inv_date or "")[:10])
+        except ValueError:
+            day = _local_day(created)
+        o = owing.setdefault(key, {"name": (name or "").strip(), "remaining": 0.0, "invoices": 0, "oldest": None})
+        o["remaining"] += float(remaining or 0)
+        o["invoices"] += 1
+        if day and (o["oldest"] is None or day < o["oldest"]):
+            o["oldest"] = day
+    if not owing:
+        return UnvisitedDebtsResponse(items=[], total=0, total_remaining=0)
+
+    # the customers' records: id, area name, rep, area id
+    pharmacy: Dict[str, tuple] = {}
+    for pid, pname, area, rep_id, area_id in (
+        await db.execute(select(Pharmacies.id, Pharmacies.name, Pharmacies.area, Pharmacies.representative_id, Pharmacies.area_id))
+    ).all():
+        k = normalize_name(pname)
+        if k in owing and k not in pharmacy:
+            pharmacy[k] = (pid, area, rep_id, area_id)
+    id_to_key = {v[0]: k for k, v in pharmacy.items()}
+
+    # customers with an open appointment are followed already
+    # (an appointment may be logged under the name without the area suffix the debt carries: both count)
+    followed = {k for r in await _resolve_appointments(db, await _scoped_appointment_logs(db, current_user)) for k in r["keys"]}
+
+    # the last contact with each customer: a visit logged, an order, a collection (anyone's)
+    last: Dict[str, datetime] = {}
+
+    def seen(key: Optional[str], ts: Optional[datetime]):
+        ts = _as_utc(ts)
+        if key and ts and (key not in last or ts > last[key]):
+            last[key] = ts
+
+    for pid, pname, ts in (
+        await db.execute(
+            select(Activity_logs.pharmacy_id, Activity_logs.pharmacy_name, Activity_logs.timestamp).where(Activity_logs.type == "pharmacy_visit")
+        )
+    ).all():
+        seen(id_to_key.get(pid) if pid in id_to_key else normalize_name(pname), ts)
+    if id_to_key:
+        for pid, ts in (
+            await db.execute(select(Orders.pharmacy_id, func.max(Orders.created_at)).where(Orders.pharmacy_id.in_(list(id_to_key))).group_by(Orders.pharmacy_id))
+        ).all():
+            seen(id_to_key.get(pid), ts)
+    for cname, ts in (
+        await db.execute(
+            select(Payments.customer_name, func.max(Payments.created_at))
+            .where(or_(Payments.status.is_(None), Payments.status != "canceled"))
+            .group_by(Payments.customer_name)
+        )
+    ).all():
+        seen(normalize_name(cname), ts)
+
+    # the rep(s) of each customer: those linked to its area or to a level above it in the tree,
+    # else the rep written on the customer record
+    from models.areas import Areas
+    from models.representative_areas import Representative_areas
+
+    rep_name_by_id = {rid: (name or "").strip() for rid, name in (await db.execute(select(Representatives.id, Representatives.name).where(Representatives.role == "rep"))).all()}
+    parents = dict((await db.execute(select(Areas.id, Areas.parent_area_id))).all())
+    reps_on_area: Dict[int, List[int]] = {}
+    for rid, aid in (await db.execute(select(Representative_areas.representative_id, Representative_areas.area_id))).all():
+        if rid in rep_name_by_id:
+            reps_on_area.setdefault(aid, []).append(rid)
+
+    def reps_of(area_id: Optional[int], own_rep: Optional[int]) -> Optional[str]:
+        found: List[int] = []
+        cur, seen_areas = area_id, set()
+        while cur is not None and cur not in seen_areas:
+            seen_areas.add(cur)
+            for rid in reps_on_area.get(cur, []):
+                if rid not in found:
+                    found.append(rid)
+            cur = parents.get(cur)
+        if not found and own_rep in rep_name_by_id:
+            found = [own_rep]
+        return "، ".join(rep_name_by_id[r] for r in found if rep_name_by_id.get(r)) or None
+
+    today = datetime.now(_LOCAL_TZ).date()
+    items: List[UnvisitedDebt] = []
+    for key, o in owing.items():
+        if key in followed:
+            continue
+        lv = last.get(key)
+        if lv is not None and o["oldest"] is not None and _local_day(lv) >= o["oldest"]:
+            continue  # visited since the debt
+        if lv is not None and o["oldest"] is None:
+            continue
+        pid, area, rep_id, area_id = pharmacy.get(key, (None, None, None, None))
+        items.append(
+            UnvisitedDebt(
+                customer_name=o["name"],
+                pharmacy_id=pid,
+                area=area,
+                rep_name=reps_of(area_id, rep_id),
+                remaining=round(o["remaining"], 2),
+                invoices=o["invoices"],
+                oldest_invoice_date=o["oldest"].isoformat() if o["oldest"] else None,
+                days_open=(today - o["oldest"]).days if o["oldest"] else None,
+                last_visit_at=lv.isoformat() if lv else None,
+            )
+        )
+    # the oldest unpaid debt first, then the larger amount
+    items.sort(key=lambda i: (i.oldest_invoice_date or "9999-12-31", -i.remaining, i.customer_name))
+    return UnvisitedDebtsResponse(items=items[:limit], total=len(items), total_remaining=round(sum(i.remaining for i in items), 2))
